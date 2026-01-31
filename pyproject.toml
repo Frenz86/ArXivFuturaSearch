@@ -48,7 +48,7 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "pytest-mock>=3.14.0",
-    "coverage>=8.0.0",
+    "coverage[toml]>=7.6.0",
     "httpx>=0.28.0",
     "fakeredis>=2.25.0",
 ]

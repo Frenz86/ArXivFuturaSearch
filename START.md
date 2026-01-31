@@ -191,9 +191,8 @@ MIT License - feel free to use this project for your research!
 
 ## 📬 Contact
 
-Built with ❤️ by **[Futura AI](https://futura.ai)**
+Built with ❤️ by **[Futura AI](https://futuraaigroup.com)**
 
-- **GitHub**: [https://github.com/yourusername/arxiv-futura-search](https://github.com/yourusername/arxiv-futura-search)
 - **Issues**: Report bugs and feature requests on GitHub Issues
 - **Discussions**: Join the community discussions
 

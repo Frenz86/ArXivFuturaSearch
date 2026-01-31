@@ -595,5 +595,3 @@ MIT License - see LICENSE file for details
 ---
 
 **Built with ❤️ for AI researchers and developers**
-
-For issues or questions, visit: https://github.com/yourusername/arxiv-rag-copilot/issues

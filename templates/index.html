@@ -1,0 +1,389 @@
+{% extends "base.html" %}
+
+{% block title %}Search - ArXiv Futura Search{% endblock %}
+
+{% block content %}
+{% if health %}
+<div class="alert alert-info" style="margin-bottom: 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 16px;">
+        <div>
+            <strong>🧠 Model Info:</strong>
+            <br><small>Embedder: <code>{{ health.embedder_model.split('/')[-1] if health.embedder_model else 'Loading' }}</code></small>
+            <br><small>Query Expansion: <strong>{{ 'Enabled' if health.query_expansion_enabled else 'Disabled' }}</strong></small>
+        </div>
+        <div style="text-align: right;">
+            <a href="/web/config" style="color: inherit; text-decoration: underline; font-size: 0.85rem;">View Full Config →</a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if not health.index_loaded %}
+<div class="alert alert-warning">
+    <strong>No index loaded.</strong> Please build the index first from the <a href="/web/build">Build Index</a> page.
+</div>
+{% endif %}
+
+<form id="searchForm">
+    <div class="form-group">
+        <label for="question">Your Question</label>
+        <textarea
+            id="question"
+            name="question"
+            placeholder="Ask a question about ML research papers... (e.g., 'What are the latest techniques for improving retrieval in RAG systems?')"
+            required
+        ></textarea>
+    </div>
+
+    <div class="form-group">
+        <label for="top_k">Number of Sources</label>
+        <input
+            type="number"
+            id="top_k"
+            name="top_k"
+            value="5"
+            min="1"
+            max="20"
+        >
+    </div>
+
+    <div class="form-group">
+        <label>
+            <input type="checkbox" id="stream" name="stream" checked>
+            Enable streaming response
+        </label>
+    </div>
+
+    <button type="submit" id="askBtn">
+        <span id="askBtnText">Ask Question</span>
+    </button>
+</form>
+
+<!-- Example Questions -->
+<div style="margin-top: 24px; padding: 16px; background: #f8f9fa; border-radius: 10px;">
+    <h4 style="margin-bottom: 12px; color: #333;">💡 Example Questions</h4>
+    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <button class="example-q" data-q="What are the main challenges in retrieval-augmented generation?">RAG Challenges</button>
+        <button class="example-q" data-q="How does semantic chunking improve retrieval quality?">Semantic Chunking</button>
+        <button class="example-q" data-q="What is chain-of-thought prompting?">Chain-of-Thought</button>
+        <button class="example-q" data-q="Explain attention mechanisms in transformers">Attention Mechanism</button>
+        <button class="example-q" data-q="What are embeddings in machine learning?">Embeddings</button>
+        <button class="example-q" data-q="How do transformers work?">Transformers</button>
+    </div>
+</div>
+
+<style>
+.example-q {
+    padding: 8px 14px;
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+    color: #555;
+}
+.example-q:hover {
+    border-color: #667eea;
+    background: #f0f4ff;
+    color: #667eea;
+}
+</style>
+
+<div id="loading" class="loading hidden">
+    <div class="spinner"></div>
+    <p>Searching and generating answer...</p>
+</div>
+
+<div id="resultSection" class="result-section hidden">
+    <div id="answerBox" class="answer-box">
+        <h3>Answer</h3>
+        <div id="answerContent" class="markdown-content"></div>
+    </div>
+
+    <div id="sourcesBox" class="sources-box hidden">
+        <h3>Sources</h3>
+        <div id="sourcesList"></div>
+    </div>
+
+    <div id="retrievalInfo" class="alert alert-info hidden">
+        <strong>Retrieval Info:</strong>
+        <span id="retrievalInfoContent"></span>
+    </div>
+</div>
+
+<div id="errorBox" class="alert alert-error hidden"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const searchForm = document.getElementById('searchForm');
+const askBtn = document.getElementById('askBtn');
+const askBtnText = document.getElementById('askBtnText');
+const loading = document.getElementById('loading');
+const resultSection = document.getElementById('resultSection');
+const answerContent = document.getElementById('answerContent');
+const sourcesBox = document.getElementById('sourcesBox');
+const sourcesList = document.getElementById('sourcesList');
+const retrievalInfo = document.getElementById('retrievalInfo');
+const retrievalInfoContent = document.getElementById('retrievalInfoContent');
+const errorBox = document.getElementById('errorBox');
+
+// Example question buttons
+document.querySelectorAll('.example-q').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.getElementById('question').value = btn.dataset.q;
+        document.getElementById('question').focus();
+    });
+});
+
+searchForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const question = document.getElementById('question').value;
+    const top_k = parseInt(document.getElementById('top_k').value);
+    const stream = document.getElementById('stream').checked;
+
+    // Reset state
+    errorBox.classList.add('hidden');
+    resultSection.classList.add('hidden');
+    sourcesBox.classList.add('hidden');
+    retrievalInfo.classList.add('hidden');
+    answerContent.innerHTML = '';
+    sourcesList.innerHTML = '';
+    askBtn.disabled = true;
+    askBtnText.textContent = 'Processing...';
+    loading.classList.remove('hidden');
+
+    try {
+        if (stream) {
+            await streamAsk(question, top_k);
+        } else {
+            await regularAsk(question, top_k);
+        }
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        askBtn.disabled = false;
+        askBtnText.textContent = 'Ask Question';
+        loading.classList.add('hidden');
+    }
+});
+
+async function regularAsk(question, top_k) {
+    const response = await fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, top_k, stream: false })
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Request failed');
+    }
+
+    const data = await response.json();
+    displayResult(data);
+}
+
+async function streamAsk(question, top_k) {
+    const response = await fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, top_k, stream: true })
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Request failed');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullAnswer = '';  // Accumulate full answer for markdown parsing
+
+    resultSection.classList.remove('hidden');
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                try {
+                    const parsed = JSON.parse(data);
+
+                    if (parsed.event === 'sources') {
+                        const sources = JSON.parse(parsed.data);
+                        displaySources(sources);
+                    } else if (parsed.event === 'retrieval_info') {
+                        const info = JSON.parse(parsed.data);
+                        displayRetrievalInfo(info);
+                    } else if (parsed.event === 'token') {
+                        fullAnswer += parsed.data;
+                        // For streaming, show plain text with basic formatting
+                        answerContent.innerHTML = fullAnswer
+                            .replace(/\n/g, '<br>')
+                            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                            .replace(/#{3}\s*(.*)/g, '<h4>$1</h4>')
+                            .replace(/#{2}\s*(.*)/g, '<h3>$1</h3>');
+                    } else if (parsed.event === 'done') {
+                        // Final markdown parse when stream is done
+                        answerContent.innerHTML = marked.parse(fullAnswer);
+                    }
+                } catch (e) {
+                    // Skip invalid JSON
+                }
+            }
+        }
+    }
+}
+
+function displayResult(data) {
+    resultSection.classList.remove('hidden');
+    answerContent.innerHTML = marked.parse(data.answer);
+    displaySources(data.sources);
+    displayRetrievalInfo(data.retrieval_info);
+}
+
+function displaySources(sources) {
+    sourcesBox.classList.remove('hidden');
+    sourcesList.innerHTML = '';
+
+    // Check if top score is low (poor match)
+    const topScore = sources.length > 0 ? sources[0].score : 0;
+    let qualityWarning = '';
+    if (topScore < 0.3) {
+        qualityWarning = `
+            <div class="alert alert-warning" style="margin-bottom: 16px;">
+                <strong>⚠️ Low Match Quality</strong>
+                <p style="margin: 8px 0 0 0; font-size: 0.9rem;">
+                    The top score is ${topScore.toFixed(2)}, which indicates the index may not contain papers relevant to your question.
+                    Consider <a href="/web/index">viewing the indexed papers</a> or <a href="/web/build">rebuilding the index</a> with a different topic.
+                </p>
+            </div>
+        `;
+    }
+
+    sourcesList.innerHTML = qualityWarning;
+
+    sources.forEach(source => {
+        const sourceEl = document.createElement('div');
+        sourceEl.className = 'source-item';
+        // Color code the score
+        const scoreClass = source.score >= 0.5 ? 'color: #28a745;' : source.score >= 0.3 ? 'color: #ffc107;' : 'color: #dc3545;';
+        sourceEl.innerHTML = `
+            <div class="source-header">
+                <span class="source-rank">#${source.rank}</span>
+                <span class="source-score" style="${scoreClass}">Score: ${source.score.toFixed(3)}</span>
+                <button class="bibtex-btn" onclick="copyBibTeX(this)" data-title="${escapeHtml(source.title || '')}" data-authors="${escapeHtml(source.authors || '')}" data-link="${source.link || ''}" data-published="${source.published || ''}" title="Copy BibTeX citation">
+                    📋 BibTeX
+                </button>
+            </div>
+            <div class="source-title">
+                <a href="${source.link}" target="_blank">${escapeHtml(source.title || 'No title')}</a>
+            </div>
+            <div class="source-meta">
+                ${source.authors ? 'By: ' + escapeHtml(source.authors) + ' | ' : ''}
+                Published: ${source.published || 'Unknown'}
+            </div>
+        `;
+        sourcesList.appendChild(sourceEl);
+    });
+}
+
+function generateBibTeX(title, authors, link, published) {
+    // Extract arXiv ID from link
+    const arxivIdMatch = link.match(/arxiv\.org\/abs\/(\d+\.\d+)/);
+    const arxivId = arxivIdMatch ? arxivIdMatch[1] : 'arxiv';
+
+    // Format authors
+    let authorList = '';
+    if (authors) {
+        const authorNames = authors.split(',').map(a => a.trim());
+        authorList = authorNames.map(author => {
+            const parts = author.split(' ');
+            if (parts.length >= 2) {
+                const lastName = parts[parts.length - 1];
+                const initials = parts.slice(0, -1).map(n => n[0]).join('');
+                return `${lastName}, ${initials}`;
+            }
+            return author;
+        }).join(' and ');
+    } else {
+        authorList = 'Unknown Author';
+    }
+
+    // Format year
+    const year = published ? new Date(published).getFullYear() : new Date().getFullYear();
+
+    // Create citation key
+    const firstAuthorLastName = authorList.split(' ')[0].replace(',', '').toLowerCase();
+    const cleanTitle = title.replace(/[^a-zA-Z0-9]/g, '').substring(0, 5);
+    const citeKey = `${firstAuthorLastName}${year}${cleanTitle}`;
+
+    return `@misc{${citeKey},
+  title={${title}},
+  author={${authorList}},
+  year={${year}},
+  eprint={${arxivId}},
+  archivePrefix={arXiv},
+  primaryClass={cs.CL}
+}`;
+}
+
+function copyBibTeX(button) {
+    const title = button.dataset.title;
+    const authors = button.dataset.authors;
+    const link = button.dataset.link;
+    const published = button.dataset.published;
+
+    const bibtex = generateBibTeX(title, authors, link, published);
+
+    navigator.clipboard.writeText(bibtex).then(() => {
+        const originalText = button.innerHTML;
+        button.innerHTML = '✓ Copied!';
+        button.style.background = '#28a745';
+        button.style.color = 'white';
+        setTimeout(() => {
+            button.innerHTML = originalText;
+            button.style.background = '';
+            button.style.color = '';
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy BibTeX:', err);
+        button.innerHTML = '✗ Failed';
+        setTimeout(() => {
+            button.innerHTML = '📋 BibTeX';
+        }, 2000);
+    });
+}
+
+function displayRetrievalInfo(info) {
+    retrievalInfo.classList.remove('hidden');
+    retrievalInfoContent.innerHTML = `
+        Retrieved ${info.candidates_retrieved} candidates,
+        ${info.rerank_method ? 'reranked with ' + info.rerank_method : 'no reranking'},
+        returned ${info.final_count} results
+        ${info.filters_applied ? ' (with filters)' : ''}
+    `;
+}
+
+function showError(message) {
+    errorBox.textContent = message;
+    errorBox.classList.remove('hidden');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

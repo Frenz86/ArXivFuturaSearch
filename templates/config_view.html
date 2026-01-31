@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block title %}Configuration - ArXiv Futura Search{% endblock %}
+
+{% block content %}
+<style>
+    .config-section {
+        margin-bottom: 24px;
+    }
+    .config-section h3 {
+        color: #667eea;
+        margin-bottom: 12px;
+        border-bottom: 2px solid #e0e0e0;
+        padding-bottom: 8px;
+    }
+    .config-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 16px;
+    }
+    .config-item {
+        background: #f8f9fa;
+        padding: 12px;
+        border-radius: 8px;
+    }
+    .config-label {
+        font-size: 0.75rem;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }
+    .config-value {
+        font-size: 1rem;
+        color: #333;
+        font-weight: 600;
+    }
+    .config-value.badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+    }
+    .badge-success {
+        background: #d4edda;
+        color: #155724;
+    }
+    .badge-warning {
+        background: #fff3cd;
+        color: #856404;
+    }
+    .badge-error {
+        background: #f8d7da;
+        color: #721c24;
+    }
+</style>
+
+<div class="config-section">
+    <h3>📊 System Configuration</h3>
+    <div id="configContent" class="config-grid">
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Loading configuration...</p>
+        </div>
+    </div>
+</div>
+
+<div class="config-section">
+    <h3>🧠 Embedding Model</h3>
+    <div id="embedderInfo" class="config-grid"></div>
+</div>
+
+<div class="config-section">
+    <h3>🔍 Retrieval Settings</h3>
+    <div id="retrievalConfig" class="config-grid"></div>
+</div>
+
+<div class="config-section">
+    <h3>⚡ Performance & Features</h3>
+    <div id="featuresConfig" class="config-grid"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadConfig() {
+    try {
+        const response = await fetch('/config');
+        const config = await response.json();
+
+        // Embedder info
+        document.getElementById('embedderInfo').innerHTML = `
+            <div class="config-item">
+                <div class="config-label">Model</div>
+                <div class="config-value">${config.embed_model.split('/').pop()}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Dimension</div>
+                <div class="config-value">${config.embed_dimension}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">E5 Model</div>
+                <div class="config-value badge ${config.is_e5_model ? 'badge-success' : 'badge-warning'}">
+                    ${config.is_e5_model ? 'Yes (prefixes enabled)' : 'No'}
+                </div>
+            </div>
+        `;
+
+        // Retrieval config
+        document.getElementById('retrievalConfig').innerHTML = `
+            <div class="config-item">
+                <div class="config-label">Top K Results</div>
+                <div class="config-value">${config.top_k}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Retrieval K</div>
+                <div class="config-value">${config.retrieval_k}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Chunk Size</div>
+                <div class="config-value">${config.chunk_size}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Semantic Weight</div>
+                <div class="config-value">${config.semantic_weight}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">BM25 Weight</div>
+                <div class="config-value">${config.bm25_weight}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Semantic Chunking</div>
+                <div class="config-value badge ${config.semantic_chunking ? 'badge-success' : 'badge-warning'}">
+                    ${config.semantic_chunking ? 'Enabled' : 'Disabled'}
+                </div>
+            </div>
+        `;
+
+        // Features config
+        document.getElementById('featuresConfig').innerHTML = `
+            <div class="config-item">
+                <div class="config-label">Reranking</div>
+                <div class="config-value badge ${config.rerank_enabled ? 'badge-success' : 'badge-warning'}">
+                    ${config.rerank_enabled ? 'Enabled (' + config.rerank_model.split('/').pop() + ')' : 'Disabled'}
+                </div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">MMR Diversity</div>
+                <div class="config-value badge ${config.rerank_use_mmr ? 'badge-success' : 'badge-warning'}">
+                    ${config.rerank_use_mmr ? 'λ=' + config.mmr_lambda : 'Disabled'}
+                </div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Query Expansion</div>
+                <div class="config-value badge ${config.query_expansion_enabled ? 'badge-success' : 'badge-warning'}">
+                    ${config.query_expansion_enabled ? config.query_expansion_method : 'Disabled'}
+                </div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Cache</div>
+                <div class="config-value badge ${config.cache_enabled ? 'badge-success' : 'badge-warning'}">
+                    ${config.cache_enabled ? 'Enabled' : 'Disabled'}
+                </div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Metrics</div>
+                <div class="config-value badge ${config.metrics_enabled ? 'badge-success' : 'badge-warning'}">
+                    ${config.metrics_enabled ? 'Enabled' : 'Disabled'}
+                </div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">API Key</div>
+                <div class="config-value badge ${config.has_openrouter_key ? 'badge-success' : 'badge-error'}">
+                    ${config.has_openrouter_key ? 'Configured' : 'Missing'}
+                </div>
+            </div>
+        `;
+
+    } catch (error) {
+        document.getElementById('configContent').innerHTML = `
+            <div class="alert alert-error">
+                Failed to load configuration: ${error.message}
+            </div>
+        `;
+    }
+}
+
+loadConfig();
+</script>
+{% endblock %}

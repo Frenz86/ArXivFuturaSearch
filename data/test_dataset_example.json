@@ -1,0 +1,34 @@
+[
+  {
+    "question": "What are typical failure modes in RAG pipelines?",
+    "ground_truth": "Common RAG issues include retrieval mismatch (retrieving irrelevant documents), missing context (not finding relevant information), hallucinations when evidence is weak, and context length limitations."
+  },
+  {
+    "question": "How do researchers evaluate RAG quality?",
+    "ground_truth": "RAG evaluation uses multiple dimensions: faithfulness/grounding (answer consistency with sources), answer relevance (addressing the question), context precision and recall (retrieval quality), and sometimes human evaluation for nuanced assessment."
+  },
+  {
+    "question": "What is multimodal retrieval?",
+    "ground_truth": "Multimodal retrieval involves searching across different data types like text, images, audio, and video. It uses techniques like CLIP for cross-modal embeddings to enable text-to-image search and other cross-modal retrieval tasks."
+  },
+  {
+    "question": "What are agentic AI systems?",
+    "ground_truth": "Agentic AI systems are autonomous agents that can plan, reason, use tools, and take sequential actions to accomplish complex goals. They often incorporate techniques like ReAct (reasoning + acting), tool use, and memory mechanisms."
+  },
+  {
+    "question": "What is chain-of-thought prompting?",
+    "ground_truth": "Chain-of-thought (CoT) prompting is a technique where language models are prompted to show their reasoning steps explicitly before arriving at an answer. This improves performance on complex reasoning tasks by breaking them into intermediate steps."
+  },
+  {
+    "question": "How does attention mechanism work in transformers?",
+    "ground_truth": "Attention mechanisms in transformers compute weighted relationships between all tokens in a sequence. They use query, key, and value matrices to determine which tokens should attend to which others, enabling the model to capture long-range dependencies."
+  },
+  {
+    "question": "What is semantic chunking?",
+    "ground_truth": "Semantic chunking divides text based on semantic boundaries rather than fixed sizes. It analyzes sentence embeddings and similarity to create coherent chunks that preserve topical coherence, improving retrieval quality compared to fixed-size chunking."
+  },
+  {
+    "question": "What are embeddings in machine learning?",
+    "ground_truth": "Embeddings are dense vector representations of data (text, images, etc.) in a continuous space where semantically similar items are positioned close together. They enable machines to work with high-dimensional data efficiently using techniques like word2vec, BERT, or CLIP."
+  }
+]

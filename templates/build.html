@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+
+{% block title %}Build Index - ArXiv Futura Search{% endblock %}
+
+{% block content %}
+<style>
+    .quick-presets {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px;
+        margin-bottom: 24px;
+    }
+
+    .preset-btn {
+        padding: 16px;
+        background: #f8f9fa;
+        border: 2px solid #e0e0e0;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: left;
+    }
+
+    .preset-btn:hover {
+        border-color: #667eea;
+        background: #f0f4ff;
+        transform: translateY(-2px);
+    }
+
+    .preset-btn.active {
+        border-color: #667eea;
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    }
+
+    .preset-title {
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 4px;
+    }
+
+    .preset-desc {
+        font-size: 0.85rem;
+        color: #666;
+    }
+
+    .preset-query {
+        font-size: 0.75rem;
+        color: #999;
+        margin-top: 6px;
+        font-family: 'Courier New', monospace;
+    }
+
+    .size-options {
+        display: flex;
+        gap: 12px;
+        margin-top: 8px;
+    }
+
+    .size-btn {
+        flex: 1;
+        padding: 10px;
+        background: #f8f9fa;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: center;
+        font-weight: 500;
+    }
+
+    .size-btn:hover {
+        border-color: #667eea;
+    }
+
+    .size-btn.active {
+        border-color: #667eea;
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    }
+
+    .info-card {
+        background: #f8f9fa;
+        border-left: 4px solid #667eea;
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+
+    .info-card h4 {
+        margin-bottom: 8px;
+        color: #333;
+    }
+
+    .info-card p {
+        color: #666;
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }
+
+    .custom-query-section {
+        margin-top: 24px;
+        padding-top: 24px;
+        border-top: 1px solid #e0e0e0;
+    }
+</style>
+
+<div class="info-card">
+    <h4>Build Your Research Index</h4>
+    <p>Choose a topic below to fetch research papers from ArXiv. The system will download, process, and index them for intelligent search and Q&A.</p>
+</div>
+
+{% if health.index_loaded %}
+<div style="text-align: center; margin-bottom: 20px;">
+    <small style="color: #999;">
+        📊 Current index: <strong>{{ health.index_documents }}</strong> papers
+        <span style="margin-left: 12px; color: #bbb;">| New build will replace it</span>
+    </small>
+</div>
+{% endif %}
+
+<form id="buildForm">
+    <input type="hidden" id="query" name="query" value="">
+    <input type="hidden" id="max_results" name="max_results" value="30">
+
+    <!-- Quick Presets -->
+    <div class="form-group">
+        <label>📚 Quick Start - Choose a Topic</label>
+        <div class="quick-presets">
+            <div class="preset-btn" data-query="cat:cs.AI" data-size="30">
+                <div class="preset-title">🤖 AI & Machine Learning</div>
+                <div class="preset-desc">Latest AI research papers</div>
+                <div class="preset-query">cat:cs.AI</div>
+            </div>
+            <div class="preset-btn" data-query="cat:cs.LG AND (transformer OR attention OR 'large language model')" data-size="50">
+                <div class="preset-title">🔄 Transformers & LLMs</div>
+                <div class="preset-desc">Papers on transformers and LLMs</div>
+                <div class="preset-query">cat:cs.LG + transformer/LLM</div>
+            </div>
+            <div class="preset-btn" data-query="cat:cs.LG AND (retrieval OR RAG OR 'semantic search')" data-size="30">
+                <div class="preset-title">🔍 RAG & Retrieval</div>
+                <div class="preset-desc">Retrieval Augmented Generation</div>
+                <div class="preset-query">cat:cs.LG + RAG</div>
+            </div>
+            <div class="preset-btn" data-query="cat:cs.CV OR cat:cs.RO" data-size="40">
+                <div class="preset-title">👁️ Computer Vision</div>
+                <div class="preset-desc">Vision & robotics papers</div>
+                <div class="preset-query">cat:cs.CV OR cat:cs.RO</div>
+            </div>
+            <div class="preset-btn" data-query="cat:cs.CL OR cat:csLG AND (NLP OR 'language model')" data-size="30">
+                <div class="preset-title">💬 NLP & Language</div>
+                <div class="preset-desc">Natural Language Processing</div>
+                <div class="preset-query">cat:cs.CL + NLP</div>
+            </div>
+            <div class="preset-btn" data-query="cat:stat.ML" data-size="30">
+                <div class="preset-title">📊 Statistics & ML</div>
+                <div class="preset-desc">Statistical learning theory</div>
+                <div class="preset-query">cat:stat.ML</div>
+            </div>
+            <div class="preset-btn" data-query="cat:cs.CR" data-size="20">
+                <div class="preset-title">🔒 Cryptography & Security</div>
+                <div class="preset-desc">Security and cryptography</div>
+                <div class="preset-query">cat:cs.CR</div>
+            </div>
+            <div class="preset-btn" data-query="cat:cs.NE" data-size="25">
+                <div class="preset-title">🧠 Neural & Evolutionary</div>
+                <div class="preset-desc">Neural and evolutionary computing</div>
+                <div class="preset-query">cat:cs.NE</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Size Selection -->
+    <div class="form-group">
+        <label>📊 Index Size (Number of Papers)</label>
+        <div class="size-options">
+            <div class="size-btn" data-size="10">
+                <div style="font-size: 1.5rem;">🟢</div>
+                <div>Quick</div>
+                <div style="font-size: 0.8rem; color: #666;">~10 papers<br>~1 min</div>
+            </div>
+            <div class="size-btn active" data-size="30">
+                <div style="font-size: 1.5rem;">🟡</div>
+                <div>Standard</div>
+                <div style="font-size: 0.8rem; color: #666;">~30 papers<br>~2 min</div>
+            </div>
+            <div class="size-btn" data-size="100">
+                <div style="font-size: 1.5rem;">🟠</div>
+                <div>Large</div>
+                <div style="font-size: 0.8rem; color: #666;">~100 papers<br>~5 min</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Selected Topic Info -->
+    <div id="selectedInfo" class="alert alert-info hidden">
+        <strong>Selected:</strong> <span id="selectedTopic"></span>
+        <br>
+        <small>Will fetch approximately <strong><span id="selectedCount"></span></strong> papers from ArXiv</small>
+    </div>
+
+    <!-- Custom Query -->
+    <div class="custom-query-section">
+        <div class="form-group">
+            <label for="customQuery">🔧 Custom Query (Optional)</label>
+            <input
+                type="text"
+                id="customQuery"
+                placeholder="Or enter your own ArXiv query... e.g., cat:cs.LG AND (gan OR diffusion)"
+            >
+            <p class="help-text">
+                <strong>ArXiv Search Tips:</strong>
+                <br>• Use <code>cat:cs.XX</code> for categories (cs.AI, cs.LG, cs.CV, cs.CL, etc.)
+                <br>• Use <code>AND</code>, <code>OR</code> to combine terms
+                <br>• Use quotes for phrases: <code>"large language models"</code>
+                <br>• See <a href="https://info.arxiv.org/help/api/user-manual.html#query-details" target="_blank">ArXiv API docs</a> for details
+            </p>
+        </div>
+    </div>
+
+    <button type="submit" id="buildBtn" style="width: 100%; padding: 18px; font-size: 1.1rem;">
+        <span id="buildBtnText">🚀 Start Building Index</span>
+    </button>
+</form>
+
+<div id="loading" class="loading hidden">
+    <div class="spinner"></div>
+    <p id="loadingText">Building index...</p>
+    <p style="margin-top: 8px; color: #666; font-size: 0.9rem;">This may take a few minutes...</p>
+</div>
+
+<div id="successBox" class="alert alert-success hidden">
+    <h3>✅ Index Built Successfully!</h3>
+    <div id="statsContent"></div>
+    <p style="margin-top: 16px;">
+        <a href="/" style="display: inline-block; padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600;">
+            🔍 Start Searching
+        </a>
+    </p>
+</div>
+
+<div id="errorBox" class="alert alert-error hidden"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const buildForm = document.getElementById('buildForm');
+const buildBtn = document.getElementById('buildBtn');
+const buildBtnText = document.getElementById('buildBtnText');
+const loading = document.getElementById('loading');
+const loadingText = document.getElementById('loadingText');
+const successBox = document.getElementById('successBox');
+const statsContent = document.getElementById('statsContent');
+const errorBox = document.getElementById('errorBox');
+const queryInput = document.getElementById('query');
+const maxResultsInput = document.getElementById('max_results');
+const customQueryInput = document.getElementById('customQuery');
+const presetBtns = document.querySelectorAll('.preset-btn');
+const sizeBtns = document.querySelectorAll('.size-btn');
+const selectedInfo = document.getElementById('selectedInfo');
+const selectedTopic = document.getElementById('selectedTopic');
+const selectedCount = document.getElementById('selectedCount');
+
+let selectedPreset = null;
+let selectedSize = 30;
+
+// Preset selection
+presetBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        presetBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedPreset = btn.dataset.query;
+        updateSelectedInfo();
+
+        // Update size if preset has a preferred size
+        const presetSize = parseInt(btn.dataset.size);
+        if (presetSize) {
+            sizeBtns.forEach(b => {
+                b.classList.toggle('active', parseInt(b.dataset.size) === presetSize);
+            });
+            selectedSize = presetSize;
+            updateSelectedInfo();
+        }
+
+        // Clear custom query
+        customQueryInput.value = '';
+    });
+});
+
+// Size selection
+sizeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        sizeBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedSize = parseInt(btn.dataset.size);
+        updateSelectedInfo();
+    });
+});
+
+// Custom query input
+customQueryInput.addEventListener('input', () => {
+    if (customQueryInput.value.trim()) {
+        presetBtns.forEach(b => b.classList.remove('active'));
+        selectedPreset = customQueryInput.value.trim();
+        updateSelectedInfo();
+    }
+});
+
+function updateSelectedInfo() {
+    if (selectedPreset) {
+        selectedInfo.classList.remove('hidden');
+        selectedTopic.textContent = selectedPreset.length > 60 ?
+            selectedPreset.substring(0, 60) + '...' : selectedPreset;
+        selectedCount.textContent = selectedSize;
+        queryInput.value = selectedPreset;
+        maxResultsInput.value = selectedSize;
+    } else {
+        selectedInfo.classList.add('selected');
+    }
+}
+
+buildForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const query = customQueryInput.value.trim() || selectedPreset;
+
+    if (!query) {
+        showError('Please select a topic or enter a custom query');
+        return;
+    }
+
+    // Reset state
+    errorBox.classList.add('hidden');
+    successBox.classList.add('hidden');
+    buildBtn.disabled = true;
+    buildBtnText.textContent = '⏳ Building...';
+    loading.classList.remove('hidden');
+
+    const messages = [
+        '📡 Connecting to ArXiv...',
+        '📥 Fetching research papers...',
+        '📄 Processing and chunking documents...',
+        '🧠 Generating embeddings...',
+        '🔨 Building vector index...',
+        '💾 Saving index...'
+    ];
+
+    let msgIndex = 0;
+    const msgInterval = setInterval(() => {
+        loadingText.textContent = messages[msgIndex % messages.length];
+        msgIndex++;
+    }, 2500);
+
+    try {
+        const response = await fetch('/build', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, max_results: selectedSize })
+        });
+
+        clearInterval(msgInterval);
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Build failed');
+        }
+
+        const data = await response.json();
+        showSuccess(data.stats);
+
+    } catch (error) {
+        clearInterval(msgInterval);
+        showError(error.message);
+    } finally {
+        buildBtn.disabled = false;
+        buildBtnText.textContent = '🚀 Start Building Index';
+        loading.classList.add('hidden');
+    }
+});
+
+function showSuccess(stats) {
+    successBox.classList.remove('hidden');
+    statsContent.innerHTML = `
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-value">${stats.papers}</div>
+                <div class="stat-label">📄 Papers</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">${stats.chunks}</div>
+                <div class="stat-label">📝 Chunks</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">${stats.dim}</div>
+                <div class="stat-label">🎯 Dimensions</div>
+            </div>
+        </div>
+        <p style="margin-top: 12px; color: #666;">
+            <strong>Vector store:</strong> ${stats.vectorstore_mode} |
+            <strong>Semantic chunking:</strong> ${stats.semantic_chunking ? '✅' : '❌'}
+        </p>
+    `;
+}
+
+function showError(message) {
+    errorBox.innerHTML = `
+        <strong>❌ Build Failed</strong>
+        <p style="margin-top: 8px;">${message}</p>
+        <p style="margin-top: 8px; font-size: 0.9rem;">
+            💡 <strong>Tip:</strong> Make sure your query is valid. Try selecting one of the preset topics above.
+        </p>
+    `;
+    errorBox.classList.remove('hidden');
+}
+</script>
+{% endblock %}

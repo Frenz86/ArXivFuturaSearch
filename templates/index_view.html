@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+
+{% block title %}Indexed Papers - ArXiv Futura Search{% endblock %}
+
+{% block content %}
+<style>
+    .paper-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .paper-item {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 16px;
+        transition: all 0.2s;
+    }
+
+    .paper-item:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border-color: #667eea;
+    }
+
+    .paper-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 8px;
+    }
+
+    .paper-title {
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 4px;
+    }
+
+    .paper-title a {
+        color: #667eea;
+        text-decoration: none;
+    }
+
+    .paper-title a:hover {
+        text-decoration: underline;
+    }
+
+    .paper-meta {
+        color: #666;
+        font-size: 0.85rem;
+        margin-bottom: 8px;
+    }
+
+    .paper-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+    }
+
+    .tag {
+        background: #e8e8e8;
+        color: #555;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+    }
+
+    .paper-preview {
+        margin-top: 12px;
+        padding: 10px;
+        background: white;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        color: #555;
+        line-height: 1.5;
+    }
+
+    .stats-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px;
+        background: #f0f4ff;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+
+    .search-box {
+        margin-bottom: 20px;
+    }
+
+    .filter-btn {
+        padding: 8px 16px;
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .filter-btn:hover {
+        border-color: #667eea;
+    }
+
+    .filter-btn.active {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        border-color: #667eea;
+    }
+</style>
+
+<div class="stats-bar">
+    <div>
+        <strong>Papers:</strong> <span id="totalCount">Loading...</span>
+        <span style="margin-left: 16px; color: #666;">(<span id="chunkCount">0</span> chunks)</span>
+    </div>
+    <div>
+        <input
+            type="text"
+            id="searchInput"
+            placeholder="Search titles..."
+            style="padding: 8px 12px; border: 1px solid #e0e0e0; border-radius: 6px; width: 250px;"
+        >
+    </div>
+</div>
+
+<div id="loading" class="loading">
+    <div class="spinner"></div>
+    <p>Loading indexed papers...</p>
+</div>
+
+<div id="papersList" class="paper-list hidden"></div>
+
+<div id="errorBox" class="alert alert-error hidden"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const papersList = document.getElementById('papersList');
+const loading = document.getElementById('loading');
+const errorBox = document.getElementById('errorBox');
+const totalCount = document.getElementById('totalCount');
+const searchInput = document.getElementById('searchInput');
+
+let allPapers = [];
+
+async function loadPapers() {
+    try {
+        const response = await fetch('/index/papers?limit=500');
+        if (!response.ok) {
+            throw new Error('Failed to load papers');
+        }
+
+        const data = await response.json();
+        allPapers = data.papers;
+        totalCount.textContent = data.total;
+        document.getElementById('chunkCount').textContent = data.chunks || 0;
+        displayPapers(allPapers);
+
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        loading.classList.add('hidden');
+    }
+}
+
+function displayPapers(papers) {
+    if (papers.length === 0) {
+        papersList.innerHTML = '<div class="alert alert-warning">No papers found</div>';
+        papersList.classList.remove('hidden');
+        return;
+    }
+
+    papersList.innerHTML = papers.map((paper, i) => `
+        <div class="paper-item">
+            <div class="paper-header">
+                <div class="paper-title">
+                    <a href="${paper.link}" target="_blank">${escapeHtml(paper.title)}</a>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="badge badge-info">#${paper.index}</span>
+                    ${paper.chunks ? `<span class="badge" style="background: #e8e8e8; color: #555;">${paper.chunks} chunks</span>` : ''}
+                </div>
+            </div>
+            <div class="paper-meta">
+                <strong>Authors:</strong> ${escapeHtml(paper.authors || 'Unknown')}
+                <br>
+                <strong>Published:</strong> ${paper.published ? new Date(paper.published).toLocaleDateString() : 'Unknown'}
+            </div>
+            ${paper.tags ? `<div class="paper-tags">
+                ${paper.tags.split(', ').slice(0, 5).map(tag => `<span class="tag">${escapeHtml(tag.trim())}</span>`).join('')}
+            </div>` : ''}
+            <div class="paper-preview">
+                <strong>Preview:</strong> ${escapeHtml(paper.preview)}
+            </div>
+        </div>
+    `).join('');
+
+    papersList.classList.remove('hidden');
+}
+
+function filterPapers(query) {
+    const lowerQuery = query.toLowerCase();
+    const filtered = allPapers.filter(paper =>
+        paper.title.toLowerCase().includes(lowerQuery) ||
+        (paper.authors && paper.authors.toLowerCase().includes(lowerQuery)) ||
+        (paper.tags && paper.tags.toLowerCase().includes(lowerQuery))
+    );
+    displayPapers(filtered);
+}
+
+searchInput.addEventListener('input', (e) => {
+    filterPapers(e.target.value);
+});
+
+function showError(message) {
+    errorBox.textContent = message;
+    errorBox.classList.remove('hidden');
+    loading.classList.add('hidden');
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Load papers on page load
+loadPapers();
+</script>
+{% endblock %}

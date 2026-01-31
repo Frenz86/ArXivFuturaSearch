@@ -12,16 +12,6 @@
 - **🎯 Ensemble Retrievers** - Hybrid search (semantic + BM25) via LangChain retrievers
 - **🤖 Multiple LLM Support** - OpenRouter, Ollama, or Mock via unified LangChain interface
 
-### Previous Features (v0.2.0)
-
-- **ChromaDB Integration** - Scalable vector store with HNSW indexing
-- **E5 Multilingual Embeddings** - Superior multilingual semantic search (1024 dim)
-- **Semantic Chunking** - Intelligent content-aware text splitting
-- **Redis Caching** - Fast repeated query responses
-- **Prometheus Metrics** - Production-ready monitoring
-- **MMR Reranking** - Diversity-aware result selection
-- **Chain-of-Thought Prompting** - Improved LLM reasoning
-
 ## ✨ Key Features
 
 ### Retrieval & Search

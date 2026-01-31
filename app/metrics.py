@@ -86,6 +86,41 @@ retrieval_scores = Histogram(
     buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
 )
 
+# Query expansion metrics
+query_expansion_hits = Counter(
+    "arxiv_rag_query_expansion_hits_total",
+    "Total number of queries with expansion applied",
+    ["method"],  # "acronym", "related", "both"
+)
+
+query_expansion_terms = Histogram(
+    "arxiv_rag_query_expansion_terms",
+    "Number of terms added via query expansion",
+    ["method"],
+    buckets=[1, 2, 3, 5, 10, 15, 20],
+)
+
+# Reranking metrics
+rerank_latency = Histogram(
+    "arxiv_rag_rerank_latency_seconds",
+    "Reranking latency in seconds",
+    ["method"],  # "mmr", "cross_encoder"
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0],
+)
+
+rerank_candidates = Histogram(
+    "arxiv_rag_rerank_candidates",
+    "Number of candidates before reranking",
+    ["method"],
+    buckets=[5, 10, 20, 30, 50, 100],
+)
+
+rerank_diversity_score = Gauge(
+    "arxiv_rag_rerank_diversity_score",
+    "Average diversity score of reranked results (for MMR)",
+    ["lambda_value"],
+)
+
 # LLM metrics
 llm_tokens_total = Counter(
     "arxiv_rag_llm_tokens_total",
@@ -118,7 +153,7 @@ system_info = Info(
 
 # Set system info
 system_info.info({
-    "version": "0.3.0",
+    "version": settings.VERSION,
     "vectorstore": "chromadb",
     "embed_model": settings.EMBED_MODEL,
     "llm_mode": settings.LLM_MODE,
@@ -283,6 +318,42 @@ def update_index_stats(documents: int, chunks: int) -> None:
     """
     index_documents.set(documents)
     index_chunks.set(chunks)
+
+
+def record_query_expansion(method: str, terms_added: int) -> None:
+    """
+    Record query expansion metrics.
+
+    Args:
+        method: Expansion method used ("acronym", "related", "both")
+        terms_added: Number of terms added
+    """
+    query_expansion_hits.labels(method=method).inc()
+    query_expansion_terms.labels(method=method).observe(terms_added)
+
+
+def record_reranking(
+    method: str,
+    candidates: int,
+    latency_seconds: float,
+    diversity_score: Optional[float] = None,
+) -> None:
+    """
+    Record reranking metrics.
+
+    Args:
+        method: Reranking method ("mmr", "cross_encoder")
+        candidates: Number of candidates before reranking
+        latency_seconds: Time taken for reranking
+        diversity_score: Average diversity score (for MMR)
+    """
+    rerank_latency.labels(method=method).observe(latency_seconds)
+    rerank_candidates.labels(method=method).observe(candidates)
+
+    if diversity_score is not None and method == "mmr":
+        # Store diversity score with lambda as label (rounded to 1 decimal)
+        lambda_label = str(int(diversity_score * 10) / 10)
+        rerank_diversity_score.labels(lambda_value=lambda_label).set(diversity_score)
 
 
 def get_metrics() -> bytes:

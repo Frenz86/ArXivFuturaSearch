@@ -48,9 +48,10 @@ services:
       dockerfile: Dockerfile
     container_name: arxiv-rag-copilot
     restart: unless-stopped
-    ports:
-      - "${APP_PORT:-8000}:8000"
-      - "${PROMETHEUS_PORT:-8001}:8001"
+    # Expose ports only internally (not to host when using Caddy)
+    expose:
+      - "8000"
+      - "8001"
     environment:
       # Environment
       - ENVIRONMENT=production
@@ -129,7 +130,7 @@ services:
     networks:
       - arxiv_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -222,6 +223,39 @@ services:
   #   networks:
   #     - arxiv_network
 
+  # =========================================================================
+  # Caddy - Reverse Proxy with Automatic HTTPS
+  # =========================================================================
+  caddy:
+    image: caddy:2-alpine
+    container_name: arxiv-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"      # HTTP for ACME challenge
+      - "443:443"    # HTTPS
+      - "8080:8080"  # Development HTTP (optional)
+      - "9091:9091"  # Prometheus metrics (optional, protected)
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    environment:
+      # Email for Let's Encrypt certificate registration
+      - ACME_EMAIL=${ACME_EMAIL:-admin@your-domain.com}
+      # Domain for automatic HTTPS (comma-separated for multiple domains)
+      - CADDY_DOMAIN=${CADDY_DOMAIN:-localhost}
+    networks:
+      - arxiv_network
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 # =============================================================================
 # Networks
 # =============================================================================
@@ -252,6 +286,21 @@ volumes:
   # HuggingFace model cache (persists downloaded models)
   hf_cache:
     name: arxiv_hf_cache
+    driver: local
+
+  # Caddy data (SSL certificates and automatic HTTPS)
+  caddy_data:
+    name: arxiv_caddy_data
+    driver: local
+
+  # Caddy configuration
+  caddy_config:
+    name: arxiv_caddy_config
+    driver: local
+
+  # Caddy logs
+  caddy_logs:
+    name: arxiv_caddy_logs
     driver: local
 
   # Ollama model storage (uncomment if using Ollama)

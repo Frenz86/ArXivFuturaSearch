@@ -1,5 +1,6 @@
 """Embedding generation using LangChain with HuggingFace models."""
 
+import threading
 from functools import lru_cache
 from typing import Optional, List
 
@@ -12,6 +13,10 @@ from app.config import settings
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# Thread-safe locks for singleton initialization
+_embedder_lock = threading.Lock()
+_reranker_lock = threading.Lock()
 
 
 class E5EmbeddingsWrapper(Embeddings):
@@ -68,16 +73,19 @@ class E5EmbeddingsWrapper(Embeddings):
 
 
 class Embedder:
-    """Wrapper for LangChain HuggingFaceEmbeddings with backward compatibility."""
+    """Thread-safe wrapper for LangChain HuggingFaceEmbeddings with backward compatibility."""
 
     _instances: dict[str, "Embedder"] = {}
 
     def __new__(cls, model_name: str) -> "Embedder":
-        """Singleton pattern - reuse model instances."""
+        """Thread-safe singleton pattern - reuse model instances."""
         if model_name not in cls._instances:
-            instance = super().__new__(cls)
-            instance._initialized = False
-            cls._instances[model_name] = instance
+            # Double-checked locking pattern for thread safety
+            with _embedder_lock:
+                if model_name not in cls._instances:
+                    instance = super().__new__(cls)
+                    instance._initialized = False
+                    cls._instances[model_name] = instance
         return cls._instances[model_name]
 
     def __init__(self, model_name: str):
@@ -177,16 +185,19 @@ class Embedder:
 
 
 class Reranker:
-    """Cross-encoder reranker with singleton support."""
+    """Thread-safe cross-encoder reranker with singleton support."""
 
     _instances: dict[str, "Reranker"] = {}
 
     def __new__(cls, model_name: str) -> "Reranker":
-        """Singleton pattern - reuse model instances."""
+        """Thread-safe singleton pattern - reuse model instances."""
         if model_name not in cls._instances:
-            instance = super().__new__(cls)
-            instance._initialized = False
-            cls._instances[model_name] = instance
+            # Double-checked locking pattern for thread safety
+            with _reranker_lock:
+                if model_name not in cls._instances:
+                    instance = super().__new__(cls)
+                    instance._initialized = False
+                    cls._instances[model_name] = instance
         return cls._instances[model_name]
 
     def __init__(self, model_name: str):

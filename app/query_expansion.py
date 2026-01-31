@@ -1,10 +1,81 @@
 """Query expansion techniques for better retrieval."""
 
 import re
-from typing import List
+from typing import List, Optional
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+# =============================================================================
+# QUERY EXPANSION SETTINGS
+# =============================================================================
+
+# Minimum and maximum query lengths for expansion
+MIN_QUERY_LENGTH_FOR_EXPANSION = 10  # Too short queries don't need expansion
+MAX_QUERY_LENGTH_FOR_EXPANSION = 200  # Too long queries are already specific
+
+# Short queries benefit more from expansion (below threshold)
+SHORT_QUERY_THRESHOLD = 30
+LONG_QUERY_THRESHOLD = 100
+
+
+def should_expand_query(
+    query: str,
+    method: str = "acronym",
+    force_expansion: bool = False
+) -> bool:
+    """
+    Determine if a query should be expanded based on its characteristics.
+
+    Args:
+        query: The query to evaluate
+        method: The expansion method being considered
+        force_expansion: Force expansion regardless of query characteristics
+
+    Returns:
+        True if the query should be expanded
+    """
+    if force_expansion:
+        return True
+
+    if method == "none":
+        return False
+
+    query_len = len(query.strip())
+
+    # Too short - don't expand (likely a simple keyword)
+    if query_len < MIN_QUERY_LENGTH_FOR_EXPANSION:
+        logger.debug("Query too short for expansion", length=query_len, query=query[:50])
+        return False
+
+    # Too long - don't expand (already specific)
+    if query_len > MAX_QUERY_LENGTH_FOR_EXPANSION:
+        logger.debug("Query too long for expansion", length=query_len)
+        return False
+
+    # Medium length queries benefit from expansion
+    return True
+
+
+def get_expansion_intensity(query: str) -> str:
+    """
+    Determine the intensity of expansion based on query length.
+
+    Args:
+        query: The query to evaluate
+
+    Returns:
+        "full", "moderate", or "minimal"
+    """
+    query_len = len(query.strip())
+
+    if query_len < SHORT_QUERY_THRESHOLD:
+        return "full"  # Short queries need more help
+    elif query_len < LONG_QUERY_THRESHOLD:
+        return "moderate"  # Medium queries need some help
+    else:
+        return "minimal"  # Long queries are already specific
 
 
 # Common acronyms and their expansions in ML/AI
@@ -47,43 +118,73 @@ MULTILINGUAL_TERMS = {
 }
 
 
-def expand_query(query: str, method: str = "acronym") -> str:
+def expand_query(
+    query: str,
+    method: str = "acronym",
+    force_expansion: bool = False
+) -> str:
     """
     Expand query with additional related terms.
 
     Args:
         query: Original query
         method: Expansion method - "acronym", "related", "both", or "none"
+        force_expansion: Force expansion regardless of query characteristics
 
     Returns:
         Expanded query string
     """
-    if method == "none":
+    if not should_expand_query(query, method, force_expansion):
         return query
 
     query_lower = query.lower()
     expanded_parts = [query]
 
+    # Determine expansion intensity based on query length
+    intensity = get_expansion_intensity(query)
+
     # Add acronym expansions
     if method in ["acronym", "both"]:
         for acronym, expansion in ACRONYM_EXPANSIONS.items():
             if acronym.lower() in query_lower and expansion not in query_lower:
+                # For minimal intensity, only add 1-2 most important expansions
+                if intensity == "minimal" and len(expanded_parts) > 2:
+                    break
                 expanded_parts.append(expansion)
 
-    # Add related terms
+    # Add related terms based on intensity
     if method in ["related", "both"]:
         words = re.findall(r'\b\w+\b', query_lower)
+        terms_added = 0
+
         for word in words:
             if word in RELATED_TERMS:
                 for related in RELATED_TERMS[word]:
                     if related not in query_lower:
+                        # Limit based on intensity
+                        if intensity == "minimal" and terms_added >= 1:
+                            break
+                        if intensity == "moderate" and terms_added >= 3:
+                            break
+                        # Full intensity can add all related terms
                         expanded_parts.append(related)
+                        terms_added += 1
+
+                if intensity == "minimal" and terms_added >= 1:
+                    break
 
     # Combine expanded terms
     expanded_query = " ".join(expanded_parts)
 
     if expanded_query != query:
-        logger.debug("Query expanded", original=query, expanded=expanded_query, method=method)
+        logger.info(
+            "Query expanded",
+            original=query,
+            expanded=expanded_query,
+            method=method,
+            intensity=intensity,
+            terms_added=len(expanded_parts) - 1,
+        )
 
     return expanded_query
 

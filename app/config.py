@@ -1,8 +1,15 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Single source of truth for version
+__version__ = "0.3.0"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # Version (single source of truth)
+    VERSION: str = __version__
 
     # Environment
     ENVIRONMENT: str = "development"  # "development" or "production"

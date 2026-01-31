@@ -1,38 +1,132 @@
 """Text chunking utilities for RAG pipeline with sentence-aware and semantic splitting."""
 
+import asyncio
 import re
-from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
 
 import nltk
 from nltk.tokenize import sent_tokenize
 import numpy as np
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+# Flag to track if NLTK data has been downloaded
+_nltk_downloaded = False
+_nltk_lock = asyncio.Lock()
+
+
+async def ensure_nltk_data_async() -> None:
+    """
+    Download NLTK data asynchronously if not present.
+
+    This is the preferred method to call during startup.
+    Uses asyncio.Lock to prevent concurrent downloads.
+    """
+    global _nltk_downloaded
+
+    if _nltk_downloaded:
+        return
+
+    async with _nltk_lock:
+        # Double-check after acquiring lock
+        if _nltk_downloaded:
+            return
+
+        try:
+            nltk.data.find("tokenizers/punkt_tab")
+            _nltk_downloaded = True
+            return
+        except LookupError:
+            pass
+
+        # Download in thread pool to avoid blocking
+        logger.info("Downloading NLTK punkt tokenizer asynchronously...")
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, nltk.download, "punkt_tab")
+        _nltk_downloaded = True
+        logger.info("NLTK punkt tokenizer downloaded successfully")
+
 
 @lru_cache(maxsize=1)
 def _ensure_nltk_data() -> None:
-    """Download NLTK data if not present (cached)."""
+    """
+    Download NLTK data if not present (cached, synchronous fallback).
+
+    This synchronous version is kept for backward compatibility
+    but ensure_nltk_data_async() should be preferred during startup.
+    """
+    global _nltk_downloaded
+
+    if _nltk_downloaded:
+        return
+
     try:
         nltk.data.find("tokenizers/punkt_tab")
+        _nltk_downloaded = True
     except LookupError:
-        logger.info("Downloading NLTK punkt tokenizer...")
+        logger.info("Downloading NLTK punkt tokenizer (synchronous)...")
         nltk.download("punkt_tab", quiet=True)
+        _nltk_downloaded = True
 
 
-@dataclass
-class Chunk:
-    """A chunk of text with metadata."""
+class ChunkMetadata(BaseModel):
+    """Type-safe metadata for a document chunk."""
 
-    doc_id: str
-    chunk_id: str
-    text: str
-    meta: dict
+    title: str = Field(description="Paper title")
+    authors: str = Field(default="", description="Comma-separated authors")
+    published: str = Field(description="Publication date")
+    link: str = Field(description="arXiv link")
+    tags: str = Field(default="", description="Comma-separated tags")
+
+    @field_validator("title", "link", "published")
+    @classmethod
+    def validate_not_empty(cls, v: str, info) -> str:
+        """Ensure required fields are not empty."""
+        if not v or not v.strip():
+            field_name = info.field_name
+            if field_name in ["title", "link"]:
+                raise ValueError(f"{field_name} cannot be empty")
+        return v
+
+
+class Chunk(BaseModel):
+    """A chunk of text with validated metadata."""
+
+    doc_id: str = Field(description="Document/paper ID")
+    chunk_id: str = Field(description="Unique chunk identifier")
+    text: str = Field(description="Chunk text content")
+    meta: ChunkMetadata = Field(description="Chunk metadata")
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary format for backward compatibility."""
+        return {
+            "doc_id": self.doc_id,
+            "chunk_id": self.chunk_id,
+            "text": self.text,
+            "meta": self.meta.model_dump(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Chunk":
+        """Create Chunk from dictionary (backward compatibility)."""
+        # Handle old format with dict meta
+        meta_data = data.get("meta", {})
+        if isinstance(meta_data, dict):
+            meta = ChunkMetadata(**meta_data)
+        else:
+            meta = meta_data
+
+        return cls(
+            doc_id=data["doc_id"],
+            chunk_id=data["chunk_id"],
+            text=data["text"],
+            meta=meta,
+        )
 
 
 def chunk_text_simple(text: str, chunk_size: int = 900, overlap: int = 150) -> list[str]:
@@ -203,6 +297,8 @@ def chunk_text_semantic(
     This creates more coherent chunks by analyzing the semantic similarity
     between consecutive sentences and creating boundaries when similarity drops.
 
+    OPTIMIZED: Uses batch processing for embeddings instead of per-sentence calls.
+
     Args:
         text: Input text to chunk
         embedder: Embedder instance for computing sentence embeddings
@@ -228,14 +324,27 @@ def chunk_text_semantic(
     if len(sentences) <= 1:
         return sentences
 
-    # Compute embeddings for all sentences
-    sentence_embeddings = embedder.embed(sentences, show_progress=False)
+    # Compute embeddings for all sentences in a single batch call
+    # This is MUCH faster than embedding each sentence individually
+    try:
+        sentence_embeddings = embedder.embed(sentences, show_progress=False, is_query=False)
+    except Exception as e:
+        logger.warning("Embedding computation failed, falling back to sentence-aware chunking", error=str(e))
+        # Fallback to sentence-aware chunking without semantic analysis
+        overlap_sentences = max(1, chunk_size // 500)
+        return chunk_text_sentences(text, chunk_size, overlap_sentences)
 
     # Compute cosine similarities between consecutive sentences
-    similarities = []
-    for i in range(len(sentence_embeddings) - 1):
-        sim = np.dot(sentence_embeddings[i], sentence_embeddings[i + 1])
-        similarities.append(sim)
+    # Using vectorized operations for better performance
+    if len(sentence_embeddings) > 1:
+        # Normalize embeddings for cosine similarity
+        norms = np.linalg.norm(sentence_embeddings, axis=1, keepdims=True)
+        normalized_embeddings = sentence_embeddings / (norms + 1e-8)  # Add small epsilon to avoid division by zero
+
+        # Compute similarities between consecutive sentences using dot product
+        similarities = np.dot(normalized_embeddings[:-1], normalized_embeddings[1:].T).diagonal()
+    else:
+        similarities = np.array([])
 
     # Find split points where similarity drops below threshold
     chunks = []
@@ -274,7 +383,7 @@ def chunk_text_semantic(
         "Semantic chunking complete",
         sentences=len(sentences),
         chunks=len(chunks),
-        avg_similarity=np.mean(similarities) if similarities else 0,
+        avg_similarity=float(np.mean(similarities)) if len(similarities) > 0 else 0,
     )
 
     return chunks
@@ -328,18 +437,20 @@ def build_chunks(
             parts = chunk_text_simple(full, chunk_size, overlap)
 
         for i, part in enumerate(parts):
+            # Create validated metadata
+            chunk_meta = ChunkMetadata(
+                title=p["title"],
+                authors=", ".join(p["authors"]) if p.get("authors") else "",
+                published=p["published"],
+                link=p["link"],
+                tags=", ".join(p.get("tags", [])) if p.get("tags") else "",
+            )
             out.append(
                 Chunk(
                     doc_id=doc_id,
                     chunk_id=f"{doc_id}::chunk_{i}",
                     text=part,
-                    meta={
-                        "title": p["title"],
-                        "authors": ", ".join(p["authors"]) if p.get("authors") else "",
-                        "published": p["published"],
-                        "link": p["link"],
-                        "tags": ", ".join(p.get("tags", [])) if p.get("tags") else "",
-                    },
+                    meta=chunk_meta,
                 )
             )
 

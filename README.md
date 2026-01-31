@@ -1,48 +1,73 @@
-# ArXiv RAG Copilot v0.3.0
+# ArXiv RAG Copilot v0.4.0
 
-**Advanced Retrieval-Augmented Generation (RAG) system** powered by LangChain for querying ArXiv research papers with enterprise-grade features.
+**Enterprise-grade Retrieval-Augmented Generation (RAG) system** powered by LangChain for querying ArXiv research papers with production-ready features.
 
-## 🚀 What's New in v0.3.0 (LangChain Refactoring)
+[![Python](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.128+-green.svg)](https://fastapi.tiangolo.com)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-- **🔗 Full LangChain Integration** - Complete refactoring to use LangChain framework
-- **📦 LangChain Components** - Vector stores, retrievers, chains, and LLMs via LangChain
-- **🔄 Backward Compatible** - Existing API preserved while using LangChain under the hood
-- **📚 ArXiv Document Loader** - Native LangChain document loader for ArXiv papers
-- **⛓️ RAG Chains** - Composable chains for retrieval and generation
-- **🎯 Ensemble Retrievers** - Hybrid search (semantic + BM25) via LangChain retrievers
-- **🤖 Multiple LLM Support** - OpenRouter, Ollama, or Mock via unified LangChain interface
+## 🚀 What's New in v0.4.0
 
-## ✨ Key Features
+### Security & Reliability
+- **🔒 Security Middleware**: CORS, rate limiting, input validation, request correlation ID
+- **⚡ Circuit Breaker**: Automatic failure isolation for LLM and external API calls
+- **🔄 Retry Logic**: Tenacity-based exponential backoff for transient failures
+- **🛡️ Input Sanitization**: Protection against injection attacks (XSS, SQLi, command injection)
+- **🔐 Caddy Reverse Proxy**: Automatic HTTPS with Let's Encrypt, security headers
 
-### Retrieval & Search
-- **Hybrid Search**: Semantic (ChromaDB) + Lexical (BM25) with Reciprocal Rank Fusion
-- **ChromaDB Vector Store**: Scalable HNSW indexing with persistent storage
-- **Semantic Chunking**: Content-aware splitting based on sentence similarity
-- **Advanced Reranking**:
-  - Cross-encoder reranking for precision
-  - MMR (Maximal Marginal Relevance) for diversity
+### Performance & Resilience
+- **🧵 Thread-Safe Singletons**: Double-checked locking for concurrent model access
+- **📊 Connection Pooling**: Optimized PostgreSQL, Redis, and HTTP client pools
+- **⏬ Graceful Shutdown**: Signal handling with request draining and cleanup callbacks
+- **🚀 Optimized Semantic Chunking**: Batch processing for faster embeddings
+- **📦 Type-Safe Models**: Pydantic validation throughout the stack
 
-### LLM Integration
-- **Streaming Responses**: Real-time answer generation
+### Observability
+- **🔍 Distributed Tracing**: Correlation ID propagation across requests
+- **📈 Extended Metrics**: Query expansion, reranking, and circuit breaker metrics
+- **🧪 RAGAS Evaluation**: Automated quality assessment with comparative testing
+
+---
+
+## ✨ Features Overview
+
+### 🔍 Intelligent Retrieval
+- **Hybrid Search**: Semantic (ChromaDB/Pgvector) + Lexical (BM25) with Reciprocal Rank Fusion
+- **Query Expansion**: Intelligent acronym expansion and related term suggestion
+- **Smart Reranking**: Cross-encoder precision + MMR diversity selection
+- **Ensemble Retrieval**: Multiple query variants fused with RRF
+
+### 🤖 LLM Integration
 - **Multiple Providers**: OpenRouter, Ollama, or Mock mode
+- **Streaming Responses**: Real-time answer generation via SSE
 - **Chain-of-Thought**: Structured reasoning with few-shot examples
-- **Smart Caching**: Redis-backed query cache
+- **Smart Caching**: Redis-backed with TTL and automatic invalidation
 
-### Monitoring & Performance
-- **Prometheus Metrics**: Request latency, cache hit rates, LLM token usage
-- **Health Checks**: Comprehensive system status monitoring
-- **Structured Logging**: JSON/console formats with context
+### 🏗️ Production Ready
+- **Docker Compose**: Full stack with PostgreSQL, Redis, Caddy
+- **Automatic HTTPS**: Let's Encrypt integration via Caddy
+- **Health Checks**: Comprehensive system monitoring
+- **Graceful Shutdown**: Clean resource cleanup on termination
+- **Prometheus Metrics**: Request latency, cache hits, circuit breaker state
 
-### Evaluation
-- **RAGAS Integration**: Automated quality assessment
-- **Retrieval Metrics**: Track precision, recall, and relevance
+---
 
 ## 📋 Quick Start
 
-### 1. Install Dependencies
+### Prerequisites
+
+- Python 3.13+
+- Docker & Docker Compose (for production deployment)
+- ArXiv API access (free, no key required)
+
+### 1. Clone and Install
 
 ```bash
-# Using uv (recommended)
+# Clone repository
+git clone https://github.com/yourusername/arxiv-rag-copilot.git
+cd arxiv-rag-copilot
+
+# Install dependencies (using uv)
 uv sync
 
 # Or using pip
@@ -51,19 +76,18 @@ pip install -e .
 
 ### 2. Configure Environment
 
-Copy `.env.example` to `.env`:
-
 ```bash
+# Copy environment template
 cp .env.example .env
+
+# Edit with your configuration
+nano .env
 ```
 
-**Required Configuration:**
+**Minimum required configuration:**
 
 ```env
-# ChromaDB directory
-CHROMA_DIR=data/chroma_db
-
-# Embeddings - E5 Multilingual
+# Embeddings
 EMBED_MODEL=intfloat/multilingual-e5-large
 
 # LLM Provider
@@ -71,209 +95,277 @@ LLM_MODE=openrouter
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
 OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
 
-# Optional: Redis for caching (recommended for production)
-CACHE_ENABLED=true
-REDIS_HOST=localhost
-REDIS_PORT=6379
+# Vector Store (ChromaDB for development)
+VECTORSTORE_MODE=chroma
+CHROMA_DIR=data/chroma_db
 ```
 
-### 3. Optional: Start Redis (for caching)
+### 3. Start Development Server
 
 ```bash
-# Using Docker
-docker run -d -p 6379:6379 redis:alpine
+# Start with hot reload
+uv run uvicorn app.main:app --reload --port 8000
 
-# Or install locally
-# macOS: brew install redis && redis-server
-# Ubuntu: sudo apt install redis-server && sudo systemctl start redis
-```
-
-### 4. Build the Index
-
-```bash
-uv run uvicorn app.main:app --port 8000 --reload
-
+# Or using python directly
+uvicorn app.main:app --reload --port 8000
 ```
 
 Access the web interface at `http://localhost:8000`
 
-## 🏗️ Architecture
+### 4. Build Search Index
+
+```bash
+# Via web interface: http://localhost:8000/web/build
+# Or via API:
+curl -X POST http://localhost:8000/build \
+  -H "Content-Type: application/json" \
+  -d '{"query": "cat:cs.AI AND (rag OR retrieval)", "max_results": 50}'
+```
+
+---
+
+## 🐳 Production Deployment with Docker
+
+### Quick Start
+
+```bash
+# Start all services (PostgreSQL, Redis, App, Caddy)
+docker compose up -d
+
+# View logs
+docker compose logs -f app
+
+# Stop all services
+docker compose down
+```
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         Browser                              │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+                                ▼
+        ┌───────────────────────────────────────┐
+        │       Caddy (Reverse Proxy)          │
+        │  HTTPS, Security Headers, Compression │
+        │  Rate Limiting, Request Logging        │
+        └───────────────────┬───────────────────┘
+                                │
+                                ▼
+        ┌───────────────────────────────────────┐
+        │          FastAPI Application          │
+        │  ┌─────────────────────────────────┐  │
+        │  │ Middleware Stack               │  │
+        │  │ • CORS                         │  │
+        │  │ • Rate Limiting                │  │
+        │  │ • Correlation ID               │  │
+        │  │ • Security Validation          │  │
+        │  └─────────────────────────────────┘  │
+        │  ┌─────────────────────────────────┐  │
+        │  │ Resilience Layer               │  │
+        │  │ • Circuit Breaker              │  │
+        │  │ • Retry with Backoff           │  │
+        │  │ • Graceful Shutdown            │  │
+        │  └─────────────────────────────────┘  │
+        │  ┌─────────────────────────────────┐  │
+        │  │ Core Services (Thread-Safe)    │  │
+        │  │ • Vector Store                 │  │
+        │  │ • Embedder                     │  │
+        │  │ • Reranker                     │  │
+        │  │ • Cache                        │  │
+        │  └─────────────────────────────────┘  │
+        └───────────────────┬───────────────────┘
+                                │
+            ┌───────────────┼───────────────┐
+            ▼               ▼               ▼
+       ┌─────────┐    ┌─────────┐    ┌─────────┐
+       │PostgreSQL│    │  Redis  │    │  ArXiv  │
+       │+pgvector│    │ (pool)  │    │   API   │
+       └─────────┘    └─────────┘    └─────────┘
+```
+
+### Configuration
+
+Edit `.env` for production:
+
+```env
+# Environment
+ENVIRONMENT=production
+
+# Vector Store (Pgvector for production)
+VECTORSTORE_MODE=pgvector
+POSTGRES_HOST=postgres
+POSTGRES_USER=arxiv_rag
+POSTGRES_PASSWORD=CHANGE_ME_PRODUCTION
+POSTGRES_DB=arxiv_rag
+
+# LLM Provider
+LLM_MODE=openrouter
+OPENROUTER_API_KEY=your-production-key
+OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
+
+# Caddy / Reverse Proxy
+ACME_EMAIL=admin@yourdomain.com
+CADDY_DOMAIN=your-domain.com
+ALLOWED_ORIGINS=https://your-domain.com
+
+# Rate Limiting (requests per minute, 0 = disabled)
+RATE_LIMIT_RPM=60
+
+# Cache
+CACHE_ENABLED=true
+REDIS_HOST=redis
+REDIS_PORT=6379
+CACHE_TTL=3600
+
+# Monitoring
+METRICS_ENABLED=true
+```
+
+### HTTPS with Caddy
+
+1. **Set your domain** in `.env`:
+   ```env
+   CADDY_DOMAIN=your-domain.com
+   ACME_EMAIL=admin@your-domain.com
+   ```
+
+2. **Update Caddyfile** - replace `your-domain.com` with your actual domain
+
+3. **Start services**:
+   ```bash
+   docker compose up -d
+   ```
+
+Caddy will automatically obtain and renew SSL certificates from Let's Encrypt!
+
+### Production Tips
+
+- **Change default passwords** in `docker-compose.yml`
+- **Set `ALLOWED_ORIGINS`** to your actual frontend domain
+- **Enable metrics** and connect Prometheus/Grafana
+- **Configure log aggregation** (JSON format enabled)
+- **Set up monitoring alerts** for circuit breaker state
+
+---
+
+## 🏗️ Project Structure
 
 ```
 arxiv-rag-copilot/
 ├── app/
-│   ├── main.py                   # FastAPI server & routes
-│   ├── config.py                 # Configuration management
-│   ├── arxiv_loader.py           # ArXiv API client
-│   ├── arxiv_document_loader.py  # LangChain document loader
-│   ├── chunking.py               # Text chunking (semantic & sentence-aware)
-│   ├── embeddings.py             # Embedding & reranking (E5, MMR)
-│   ├── vectorstore_chroma.py     # ChromaDB hybrid store
-│   ├── rag.py                    # RAG logic & LLM generation
-│   ├── cache.py                  # Redis caching layer
-│   ├── metrics.py                # Prometheus metrics
-│   └── evals.py                  # RAGAS evaluation
-├── templates/                    # Web UI templates
-├── data/
-│   ├── raw/                      # Raw ArXiv data
-│   ├── processed/                # Evaluations
-│   └── chroma_db/                # ChromaDB storage
-└── pyproject.toml                # Dependencies
+│   ├── main.py                    # FastAPI server & routes
+│   ├── config.py                  # Configuration management
+│   │
+│   # Core RAG Pipeline
+│   ├── arxiv_loader.py            # ArXiv API client
+│   ├── arxiv_document_loader.py   # LangChain document loader
+│   ├── chunking.py                # Text chunking (semantic/sentence-aware)
+│   ├── embeddings.py              # Embedding & reranking (thread-safe)
+│   ├── vectorstore.py             # Vector store factory
+│   ├── vectorstore_chroma.py      # ChromaDB implementation
+│   ├── vectorstore_pgvector.py    # Pgvector implementation
+│   ├── query_expansion.py         # Query expansion techniques
+│   ├── rag.py                     # RAG logic & LLM generation
+│   │
+│   # Resilience & Reliability
+│   ├── circuit_breaker.py         # Circuit breaker pattern
+│   ├── retry.py                   # Retry with exponential backoff
+│   ├── error_handling.py           # Error types & fallback strategies
+│   ├── shutdown.py                # Graceful shutdown handling
+│   │
+│   # Performance & Pooling
+│   ├── pooling.py                 # Connection pool configuration
+│   │
+│   # Security & Validation
+│   ├── middleware.py              # CORS, rate limiting, correlation ID
+│   ├── validation.py               # Input sanitization & threat detection
+│   │
+│   # Cross-cutting Concerns
+│   ├── dependencies.py            # Dependency injection
+│   ├── models.py                  # Type-safe Pydantic models
+│   ├── cache.py                   # Redis caching layer
+│   ├── metrics.py                 # Prometheus metrics
+│   ├── logging_config.py          # Structured logging
+│   │
+│   └── evals.py                   # RAGAS evaluation
+│
+├── templates/                      # Web UI templates
+├── Caddyfile                       # Caddy reverse proxy config
+├── docker-compose.yml              # Production deployment
+├── docker-compose.dev.yml          # Development deployment
+├── tests/                          # Test suite
+├── data/                           # Data directory
+│   ├── raw/                        # Raw ArXiv data
+│   ├── processed/                  # Evaluation results
+│   └── chroma_db/                  # ChromaDB storage (dev)
+└── pyproject.toml                  # Dependencies
 ```
 
-## 🔧 How It Works
+---
 
-### Index Building
+## 🌐 API Documentation
 
-1. **Fetch Papers**: ArXiv API retrieves papers based on search query
-2. **Semantic Chunking**:
-   - Sentence tokenization (NLTK)
-   - Embedding-based similarity analysis
-   - Intelligent boundary detection
-3. **Generate Embeddings**: E5 Multilingual creates 1024-dim vectors
-4. **Build Index**: ChromaDB HNSW index with persistent storage
+### Core Endpoints
 
-### Query Processing
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/build` | Build search index from ArXiv papers |
+| `POST` | `/ask` | Ask question (streaming supported) |
+| `GET` | `/search` | Search without LLM generation |
+| `GET` | `/health` | System health check |
+| `GET` | `/config` | Current configuration |
 
-1. **Embed Query**: E5 Multilingual embedding
-2. **Hybrid Search**:
-   - **Semantic**: ChromaDB cosine similarity (70% weight)
-   - **Lexical**: BM25 keyword matching (30% weight)
-   - **Fusion**: Reciprocal Rank Fusion combines results
-3. **Rerank** (configurable):
-   - **Cross-Encoder**: Precision-focused reranking
-   - **MMR**: Diversity-aware selection (balances relevance & novelty)
-4. **Generate Answer**:
-   - Chain-of-thought prompting
-   - Few-shot examples
-   - Source citations
+### Search & Index
 
-### Response Format
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/index/papers` | List all indexed papers |
+| `GET` | `/index/stats` | Index statistics |
 
-```
-Answer:
-Let's think step by step:
-1. Relevant sources: [1], [3]
-2. Key information: ...
-3. Synthesis: ...
+### Evaluation (RAGAS)
 
-According to recent research [1], RAG systems...
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/evaluate` | Run RAGAS evaluation |
+| `POST` | `/evaluate/compare` | Compare configurations |
+| `GET` | `/evaluate/results` | Latest evaluation results |
+| `GET` | `/evaluate/history` | Evaluation history |
 
-Sources:
-#1: Title of Paper (Score: 0.854)
-By: Author Name | Published: 2024-01-15
+### Monitoring
 
-Retrieval Info:
-Retrieved 20 candidates, reranked with MMR, returned 5 results (12ms)
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/metrics/summary` | Human-readable metrics |
+| `GET` | `/cache/stats` | Cache statistics |
+| `POST` | `/cache/clear` | Clear cache entries |
+| `GET` | `/circuit-breaker` | Circuit breaker status |
 
-## 🔗 Using LangChain Components
+---
 
-The system is now built on LangChain, allowing direct access to powerful composable components:
+## ⚙️ Configuration Reference
 
-### Document Loader
-
-```python
-from app.arxiv_document_loader import ArXivLoader
-
-# Load and chunk ArXiv papers
-loader = ArXivLoader(
-    search_query="cat:cs.AI",
-    max_results=10,
-    chunk_documents=True,
-    use_semantic_chunking=True
-)
-
-documents = loader.load()  # Returns list of LangChain Document objects
-```
-
-### Retrievers
-
-```python
-from app.vectorstore_chroma import ChromaHybridStore
-
-# Initialize vector store
-store = ChromaHybridStore()
-
-# Get LangChain retriever with MMR
-retriever = store.get_langchain_retriever(
-    search_type="mmr",
-    search_kwargs={"k": 5, "fetch_k": 20, "lambda_mult": 0.5}
-)
-
-# Or get ensemble retriever (semantic + BM25)
-ensemble = store.get_ensemble_retriever(
-    top_k=5,
-    semantic_weight=0.7,
-    bm25_weight=0.3
-)
-
-# Use in chains
-docs = retriever.invoke("What is attention mechanism?")
-```
-
-### RAG Chains
-
-```python
-from app.rag import create_rag_chain
-
-# Create complete RAG chain
-chain = create_rag_chain(
-    retriever=retriever,
-    use_cot=True,  # Chain-of-thought prompting
-    streaming=False
-)
-
-# Invoke chain
-answer = chain.invoke("Explain transformer architecture")
-
-# Or with streaming
-for chunk in chain.stream("Explain transformer architecture"):
-    print(chunk, end="", flush=True)
-```
-
-### Direct LLM Access
-
-```python
-from app.rag import get_llm
-
-# Get LangChain LLM
-llm = get_llm(streaming=False)
-
-# Use directly
-response = await llm.ainvoke("Your prompt here")
-
-# Or with streaming
-async for chunk in llm.astream("Your prompt here"):
-    print(chunk.content, end="", flush=True)
-```
-
-### Custom Chains
-
-```python
-from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from app.rag import get_llm
-
-# Build custom chain
-prompt = PromptTemplate.from_template("Summarize: {text}")
-llm = get_llm()
-parser = StrOutputParser()
-
-chain = prompt | llm | parser
-result = chain.invoke({"text": "Your text here"})
-```
-
-## ⚙️ Configuration
-
-### ChromaDB Vector Store
+### Vector Store Options
 
 ```env
-# ChromaDB directory (persistent storage)
+# ChromaDB (development, local files)
+VECTORSTORE_MODE=chroma
 CHROMA_DIR=data/chroma_db
+
+# Pgvector (production, PostgreSQL)
+VECTORSTORE_MODE=pgvector
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=arxiv_rag
+POSTGRES_USER=arxiv_rag
+POSTGRES_PASSWORD=changeme
+POSTGRES_POOL_SIZE=10
 ```
 
-### Embeddings
+### Embedding Models
 
 ```env
 # Best quality (1024 dim, multilingual)
@@ -283,26 +375,24 @@ EMBED_MODEL=intfloat/multilingual-e5-large
 # intfloat/multilingual-e5-base        # 768 dim, faster
 # intfloat/multilingual-e5-small       # 384 dim, fastest
 # sentence-transformers/all-MiniLM-L6-v2  # 384 dim, English only
+# BAAI/bge-m3-retromae                 # 1024 dim, excellent retrieval
 ```
 
-### LLM Providers
+### LLM Configuration
 
-**OpenRouter** (default):
 ```env
+# OpenRouter (multi-provider access)
 LLM_MODE=openrouter
 OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
-```
+OPENROUTER_TIMEOUT=120
 
-**Ollama** (local):
-```env
+# Ollama (local inference)
 LLM_MODE=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1
-```
 
-**Mock** (testing):
-```env
+# Mock (testing)
 LLM_MODE=mock
 ```
 
@@ -327,13 +417,20 @@ BM25_WEIGHT=0.3           # Lexical search weight
 ### Reranking
 
 ```env
-# Cross-encoder reranking
+# Enable reranking
 RERANK_ENABLED=true
 RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 
-# MMR (Maximal Marginal Relevance) for diversity
+# MMR (diversity)
 RERANK_USE_MMR=true
 MMR_LAMBDA=0.5            # 0=max diversity, 1=max relevance
+```
+
+### Query Expansion
+
+```env
+QUERY_EXPANSION_ENABLED=true
+QUERY_EXPANSION_METHOD=acronym  # "acronym", "related", "both", "none"
 ```
 
 ### Caching
@@ -346,55 +443,40 @@ REDIS_DB=0
 CACHE_TTL=3600            # 1 hour
 ```
 
-### Monitoring
+### Security
 
 ```env
-METRICS_ENABLED=true
-PROMETHEUS_PORT=8001
+# CORS (comma-separated origins)
+ALLOWED_ORIGINS=http://localhost:3000,https://example.com
+
+# Rate Limiting
+RATE_LIMIT_RPM=60          # Requests per minute (0 = disabled)
+
+# Caddy / Reverse Proxy
+ACME_EMAIL=admin@yourdomain.com
+CADDY_DOMAIN=your-domain.com
 ```
 
-## 🌐 API Endpoints
+---
 
-### Web Interface
-- `GET /` - Main search page
-- `GET /web/build` - Index building page
-- `GET /docs` - Interactive API documentation (Swagger)
-
-### Core API
-- `POST /build` - Build new search index from ArXiv papers
-- `POST /ask` - Ask questions with streaming support
-- `GET /health` - System health check
-- `GET /config` - Current configuration
-
-### Search
-- `GET /search` - Search without LLM generation
-
-### Monitoring
-- `GET /metrics` - Prometheus metrics (text format)
-- `GET /metrics/summary` - Human-readable metrics summary
-- `GET /cache/stats` - Cache statistics
-- `POST /cache/clear` - Clear cache entries
-
-### Streaming
-
-Server-Sent Events for real-time responses:
-
-```bash
-curl -X POST http://localhost:8000/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What is RAG?", "stream": true}'
-```
-
-## 📊 Monitoring
+## 📊 Monitoring & Observability
 
 ### Prometheus Metrics
 
-Access at `http://localhost:8001/metrics`:
+Available at `http://localhost:8001/metrics`:
 
-- **Request metrics**: `arxiv_rag_requests_total`, `arxiv_rag_request_latency_seconds`
-- **Retrieval metrics**: `arxiv_rag_retrieval_latency_seconds`, `arxiv_rag_documents_retrieved`
-- **LLM metrics**: `arxiv_rag_llm_latency_seconds`, `arxiv_rag_llm_tokens_total`
-- **Cache metrics**: `arxiv_rag_cache_hits_total`, `arxiv_rag_cache_misses_total`
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `arxiv_rag_requests_total` | Counter | endpoint, method | Total requests |
+| `arxiv_rag_errors_total` | Counter | endpoint, error_type | Total errors |
+| `arxiv_rag_request_latency_seconds` | Histogram | endpoint | Request duration |
+| `arxiv_rag_retrieval_latency_seconds` | Histogram | method | Retrieval duration |
+| `arxiv_rag_llm_latency_seconds` | Histogram | provider, model | LLM duration |
+| `arxiv_rag_cache_hits_total` | Counter | cache_type | Cache hits |
+| `arxiv_rag_cache_misses_total` | Counter | cache_type | Cache misses |
+| `arxiv_rag_query_expansion_hits_total` | Counter | method | Query expansions |
+| `arxiv_rag_rerank_latency_seconds` | Histogram | method | Reranking duration |
+| `arxiv_rag_documents_retrieved` | Histogram | method | Docs per retrieval |
 
 ### Health Check
 
@@ -402,177 +484,218 @@ Access at `http://localhost:8001/metrics`:
 curl http://localhost:8000/health
 ```
 
-Returns:
+Response:
 ```json
 {
   "status": "ok",
   "llm_mode": "openrouter",
-  "llm_health": {"healthy": true, "details": "..."},
+  "llm_health": {"healthy": true},
   "index_loaded": true,
   "index_documents": 150,
   "embedder_loaded": true,
-  "reranker_enabled": true
+  "reranker_enabled": true,
+  "query_expansion_enabled": true
 }
 ```
 
-## 🧪 Development
+### Distributed Tracing
 
-### Running Tests
+Each request includes a `X-Request-ID` header for tracing:
 
 ```bash
-pytest
+curl -v http://localhost:8000/health | grep X-Request-ID
 ```
 
-### Evaluation with RAGAS
+---
 
-The system includes comprehensive evaluation capabilities using RAGAS metrics:
+## 🧪 Testing & Evaluation
 
-**Command Line:**
+### Run Tests
 
 ```bash
-# Run single evaluation
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=app --cov-report=html
+
+# Run specific test file
+pytest tests/test_api.py
+
+# Run with verbose output
+pytest -v
+```
+
+### RAGAS Evaluation
+
+```bash
+# Command line
 python -m app.evals
 
-# Run comparative evaluation (MMR vs Cross-Encoder vs None)
+# With comparison
 python -m app.evals --compare
-```
 
-**Via API:**
-
-```bash
-# Run evaluation
+# Via API
 curl -X POST http://localhost:8000/evaluate \
   -H "Content-Type: application/json" \
-  -d '{
-    "rerank_method": "mmr",
-    "use_cot_prompting": true
-  }'
-
-# Run comparative evaluation
-curl -X POST http://localhost:8000/evaluate/compare \
-  -H "Content-Type: application/json" \
-  -d '{"compare_rerank_methods": true}'
-
-# Get latest results
-curl http://localhost:8000/evaluate/results
-
-# Get evaluation history
-curl http://localhost:8000/evaluate/history?limit=5
-```
-
-**Custom Test Dataset:**
-
-Create a JSON file with your test questions:
-
-```json
-[
-  {
-    "question": "Your question here",
-    "ground_truth": "Expected answer here"
-  }
-]
-```
-
-Then run with:
-
-```bash
-curl -X POST http://localhost:8000/evaluate \
-  -H "Content-Type: application/json" \
-  -d '{"test_dataset_path": "path/to/your/dataset.json"}'
+  -d '{"rerank_method": "mmr", "use_cot_prompting": true}'
 ```
 
 **RAGAS Metrics:**
-
-- **Faithfulness**: Answer consistency with retrieved sources
-- **Answer Relevancy**: How well the answer addresses the question
-- **Context Precision**: Quality of retrieved documents
+- **Faithfulness**: Answer consistency with sources
+- **Answer Relevancy**: How well answer addresses question
+- **Context Precision**: Retrieval quality
 - **Context Recall**: Coverage of relevant information
-- **Answer Similarity**: Semantic similarity to ground truth
 - **Answer Correctness**: Factual accuracy
 
-**Output:**
+---
 
-Results are saved to `data/processed/`:
-- `eval_summary_TIMESTAMP.json` - Complete results with metrics
-- `eval_results_TIMESTAMP.csv` - Detailed per-question results
-- `ragas_scores_latest.csv` - Latest RAGAS scores
-- `eval_comparison_TIMESTAMP.json` - Comparative analysis (if using --compare)
+## 🎯 Performance Optimization
 
-### Logging
+### Caching Strategy
 
+| Scenario | Cache Type | Speedup |
+|----------|------------|---------|
+| Repeated queries | Redis | 10-100x |
+| Embedding computation | In-memory | 5-20x |
+| Vector store (ChromaDB) | Internal cache | 2-5x |
+
+### Tuning Parameters
+
+**For precision** (focus on accuracy):
 ```env
-LOG_LEVEL=INFO          # DEBUG, INFO, WARNING, ERROR
-LOG_FORMAT=console      # "console" or "json" (for production)
+MMR_LAMBDA=0.8-1.0          # Higher relevance weight
+SEMANTIC_WEIGHT=0.8         # Stronger semantic focus
+RERANK_ENABLED=true
 ```
 
-## 🎯 Performance Tips
+**For diversity** (explore different aspects):
+```env
+MMR_LAMBDA=0.3-0.5          # Higher diversity weight
+SEMANTIC_WEIGHT=0.6
+QUERY_EXPANSION_METHOD=both   # More related terms
+```
 
-1. **Enable Redis Caching**: 10-100x speedup for repeated queries
-2. **Tune MMR Lambda**:
-   - λ=0.8-1.0 for high precision
-   - λ=0.3-0.5 for diverse results
-3. **Adjust RETRIEVAL_K**: Higher values improve recall but increase latency
-4. **Semantic Chunking**: Better quality but slower indexing
+**For speed** (minimize latency):
+```env
+RETRIEVAL_K=10               # Fewer candidates
+RERANK_ENABLED=false         # Skip reranking
+CHUNK_SIZE=600               # Smaller chunks
+EMBED_MODEL=intfloat/multilingual-e5-small
+```
+
+---
 
 ## 🐛 Troubleshooting
 
-### No Answer Displayed
+### Docker Issues
 
-1. Check logs for OpenRouter errors
-2. Verify `OPENROUTER_API_KEY` in `.env`
-3. Confirm model name: `anthropic/claude-3.5-sonnet` (not `claude-4.5-sonnet`)
-4. Restart server after `.env` changes
+**Container won't start:**
+```bash
+# Check logs
+docker compose logs app
 
-### Index Not Loading
+# Verify ports are available
+netstat -tuln | grep -E '8000|5432|6379'
+```
 
-1. Run `/web/build` to create new index
-2. Check `data/chroma_db/` directory exists
-3. Verify ArXiv API accessibility
+**Database connection errors:**
+```bash
+# Check PostgreSQL is healthy
+docker compose exec postgres pg_isready -U arxiv_rag
 
-### Cache Not Working
+# Reset database (WARNING: deletes data)
+docker compose down -v
+docker compose up -d
+```
 
-1. Ensure Redis is running: `redis-cli ping` (should return PONG)
-2. Check `CACHE_ENABLED=true` in `.env`
-3. View cache stats: `curl http://localhost:8000/cache/stats`
+### Caddy HTTPS Issues
 
-### Slow Queries
+**Certificate not obtained:**
+```bash
+# Check Caddy logs
+docker compose logs caddy
 
-1. Enable Redis caching
-2. Reduce `RETRIEVAL_K` (try 10-15)
-3. Disable reranking if not needed
-4. Use smaller embedding model (e5-base or e5-small)
+# Verify domain DNS points to server
+nslookup your-domain.com
+
+# Check port 80/443 accessibility
+curl http://your-domain.com
+```
+
+**Use HTTP locally (no HTTPS):**
+```bash
+# Access via :8080 port
+curl http://localhost:8080/health
+```
+
+### Application Issues
+
+**No answers from LLM:**
+```bash
+# Check health endpoint
+curl http://localhost:8000/health
+
+# Verify API key
+echo $OPENROUTER_API_KEY
+
+# Check circuit breaker state
+curl http://localhost:8000/circuit-breaker
+```
+
+**Slow queries:**
+```bash
+# Check cache stats
+curl http://localhost:8000/cache/stats
+
+# View metrics summary
+curl http://localhost:8000/metrics/summary
+```
+
+---
 
 ## 📈 Benchmarks
 
-**System**: E5-large embeddings, ChromaDB, Claude 3.5 Sonnet
+**System**: E5-large, Claude 3.5 Sonnet, 10K documents
 
 | Operation | Latency | Notes |
 |-----------|---------|-------|
-| Embedding (query) | ~50ms | E5-large, CPU |
-| Retrieval (hybrid) | ~30ms | ChromaDB, 10K docs |
-| Reranking (MMR) | ~100ms | 20 candidates → 5 results |
-| LLM Generation | ~2-5s | Claude 3.5, streaming |
-| **Total (cached)** | **~50ms** | Cache hit |
-| **Total (uncached)** | **~3-6s** | Full pipeline |
+| Query Embedding | ~50ms | CPU, single thread |
+| Hybrid Retrieval | ~30ms | Semantic + BM25 |
+| MMR Reranking | ~100ms | 20→5 candidates |
+| LLM Generation | ~2-5s | Streaming enabled |
+| **Cached Query** | **~50ms** | Redis hit |
+| **Uncached Query** | **~3-6s** | Full pipeline |
+
+---
 
 ## 🤝 Contributing
 
 Contributions welcome! Please:
 
 1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request with tests
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Write tests for new functionality
+4. Ensure all tests pass (`pytest`)
+5. Submit a pull request
+
+---
 
 ## 📄 License
 
-MIT License - see LICENSE file for details
+MIT License - see [LICENSE](LICENSE) file for details.
+
+---
 
 ## 🙏 Acknowledgments
 
 - **ChromaDB** - Scalable vector database
+- **Pgvector** - Vector similarity in PostgreSQL
+- **LangChain** - Framework for LLM applications
 - **Sentence Transformers** - E5 multilingual embeddings
 - **RAGAS** - RAG evaluation framework
-- **FastAPI** - Modern web framework
+- **FastAPI** - Modern async web framework
+- **Caddy** - Automatic HTTPS server
 - **ArXiv** - Open access research papers
 
 ---

@@ -1,0 +1,181 @@
+# =============================================================================
+# ArXiv RAG Copilot - Caddy Reverse Proxy Configuration
+# =============================================================================
+# This Caddyfile provides:
+# - Automatic HTTPS with Let's Encrypt
+# - Reverse proxy to FastAPI app
+# - Security headers
+# - Rate limiting
+# - Request/response logging
+# =============================================================================
+
+# =============================================================================
+# PRODUCTION CONFIGURATION (with automatic HTTPS)
+# =============================================================================
+# Replace your-domain.com with your actual domain
+# Caddy will automatically obtain and renew SSL certificates
+
+{
+    # Global options
+    email admin@your-domain.com  # Replace with your email for Let's Encrypt
+
+    # ACME configuration for Let's Encrypt
+    acme_ca https://acme-v02.api.letsencrypt.org/directory
+
+    # Admin API (disabled in production, enable for debugging)
+    # admin localhost:2019
+
+    # Default SNI for HTTPS
+    default_sni arxiv-rag.local
+}
+
+# =============================================================================
+# Main Domain Configuration
+# =============================================================================
+your-domain.com {
+    # =============================================================================
+    # REDIRECT HTTP TO HTTPS
+    # =============================================================================
+    @http {
+        protocol http
+    }
+    redir @http https://{host}{uri} permanent
+
+    # =============================================================================
+    # REVERSE PROXY TO FASTAPI
+    # =============================================================================
+    reverse_proxy app:8000 {
+        # Health check
+        health_uri /health
+        health_interval 10s
+        health_timeout 5s
+
+        # Headers to pass to backend
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Request-ID {header[X-Request-ID]}
+
+        # Connection limits
+        transport http {
+            dial_timeout 30s
+            response_header_timeout 60s
+            keepalive 90s
+            keepalive_idle_conns 10
+        }
+
+        # Retry on failure
+        fail_duration 10s
+        max_fails 3
+    }
+
+    # =============================================================================
+    # SECURITY HEADERS
+    # =============================================================================
+    header {
+        # HSTS (HTTP Strict Transport Security)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+        # Prevent content type sniffing
+        X-Content-Type-Options "nosniff"
+
+        # Prevent clickjacking
+        X-Frame-Options "DENY"
+
+        # XSS Protection
+        X-XSS-Protection "1; mode=block"
+
+        # Referrer Policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+
+        # Content Security Policy (adjust for your needs)
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self';"
+
+        # Permissions Policy (formerly Feature-Policy)
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+
+        # Remove server signature
+        -Server
+
+        # Correlation ID (pass through from backend or generate)
+        X-Request-ID {header>X-Request-ID<{uuid}}
+    }
+
+    # =============================================================================
+    # COMPRESSION
+    # =============================================================================
+    encode {
+        zstd
+        gzip
+        minimum_length 1024
+    }
+
+    # =============================================================================
+    # RATE LIMITING (optional - uncomment if needed)
+    # =============================================================================
+    # rate_limit {
+    #     zone api_limit {
+    #         key {remote_host}
+    #         events 100
+    #         window 1m
+    #     }
+    # }
+
+    # =============================================================================
+    # LOGGING
+    # =============================================================================
+    log {
+        output file /var/log/caddy/access.log
+        format json
+        level INFO
+    }
+
+    # =============================================================================
+    # FILE SERVER (for static assets if needed)
+    # =============================================================================
+    # root * /srv/static
+    # file_server browse
+}
+
+# =============================================================================
+# DEVELOPMENT / LOCAL CONFIGURATION
+# =============================================================================
+# Use this for local development without HTTPS
+
+http://localhost:8080 {
+    reverse_proxy app:8000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto http
+    }
+
+    header {
+        X-Request-ID {uuid}
+        -Server
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}
+
+# =============================================================================
+# PROMETHEUS METRICS ENDPOINT (protected)
+# =============================================================================
+# Uncomment to expose metrics on a separate port
+
+#:9091 {
+    # Allow only from localhost/private networks
+    @allowed from 127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+
+    handle @allowed {
+        reverse_proxy app:8001
+    }
+
+    handle {
+        respond "Forbidden" 403
+    }
+}

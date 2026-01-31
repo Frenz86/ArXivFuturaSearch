@@ -12,6 +12,8 @@ from langchain_community.llms import Ollama
 
 from app.config import settings
 from app.logging_config import get_logger
+from app.retry import llm_retry
+from app.circuit_breaker import with_circuit_breaker, get_llm_circuit_breaker, CircuitBreakerError
 
 logger = get_logger(__name__)
 
@@ -208,6 +210,8 @@ def create_rag_chain(retriever, use_cot: bool = True, streaming: bool = False):
     return chain
 
 
+@llm_retry(max_attempts=3)
+@with_circuit_breaker()
 async def llm_generate_async(prompt: str) -> str:
     """
     Generate LLM response asynchronously using LangChain.

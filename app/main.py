@@ -35,11 +35,16 @@ from app.metrics import (
     record_retrieval,
     record_llm_request,
     update_index_stats,
+    record_query_expansion,
+    record_reranking,
 )
 from app.logging_config import get_logger
 
 # Import vector store factory (supports ChromaDB and Pgvector)
 from app.vectorstore import get_vectorstore, VectorStoreInterface
+from app import dependencies as deps
+from app.error_handling import LLMError, classify_error, log_error_context, ErrorSeverity
+from app.middleware import setup_middleware, setup_cors_middleware
 
 logger = get_logger(__name__)
 
@@ -52,7 +57,15 @@ async def lifespan(app: FastAPI):
     """Application lifespan: load models, cache, and index on startup."""
     global _store
 
-    logger.info("Starting ArXiv Futura Search v0.3.0 (LangChain + ChromaDB)")
+    logger.info(
+        "Starting ArXiv Futura Search",
+        version=settings.VERSION,
+        mode="LangChain + ChromaDB"
+    )
+
+    # Download NLTK data asynchronously
+    from app.chunking import ensure_nltk_data_async
+    await ensure_nltk_data_async()
 
     # Initialize cache
     cache = get_cache()
@@ -77,6 +90,9 @@ async def lifespan(app: FastAPI):
         doc_count = _store.count()
         logger.info("Vector store loaded", documents=doc_count, mode=settings.VECTORSTORE_MODE)
         update_index_stats(documents=doc_count, chunks=doc_count)
+
+        # Set store instance for dependency injection
+        deps.set_store_instance(_store)
     except Exception as e:
         logger.warning("Vector store initialization failed", error=str(e))
 
@@ -88,9 +104,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ArXiv Futura Search",
     description="Hybrid RAG pipeline for ML research papers with OpenRouter integration",
-    version="2.0.0",
+    version=settings.VERSION,
     lifespan=lifespan,
 )
+
+# Setup middleware (CORS, rate limiting, correlation ID, security)
+setup_cors_middleware(app)
+setup_middleware(app)
 
 # Setup Jinja2 templates
 templates = Jinja2Templates(directory="templates")
@@ -218,12 +238,7 @@ async def build_index_async(query: str, max_results: int = 30) -> dict:
 
 def get_store() -> VectorStoreInterface:
     """Get the loaded store or raise error."""
-    if _store is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Index not found. Build it first via POST /build",
-        )
-    return _store
+    return deps.get_store()
 
 
 # API Endpoints
@@ -356,11 +371,13 @@ async def ask(req: AskRequest):
         # Try cache first (for non-streaming requests)
         cache_key = None
         if cache.enabled and not req.stream:
+            # Use json.dumps with sort_keys=True for deterministic cache keys
+            filters_hash = json.dumps(req.filters, sort_keys=True) if req.filters else "no_filters"
             cache_key = cache._make_key(
                 "query",
                 req.question,
                 req.top_k,
-                str(req.filters) if req.filters else "no_filters",
+                filters_hash,
             )
             cached_response = cache.get(cache_key)
             if cached_response:
@@ -377,12 +394,17 @@ async def ask(req: AskRequest):
         if settings.QUERY_EXPANSION_ENABLED:
             # Use ensemble search with query expansion and RRF
             logger.debug("Using ensemble search with query expansion")
+            original_len = len(req.question)
             retrieved = store.search_ensemble(
                 query_text=req.question,
                 top_k=retrieval_k,
                 query_expansion=True,
                 filters=req.filters,
             )
+            # Record query expansion metrics
+            # Estimate terms added by checking if expansion happened
+            terms_added = max(0, len(retrieved) - req.top_k) if retrieved else 0
+            record_query_expansion(settings.QUERY_EXPANSION_METHOD, terms_added)
         else:
             # Standard hybrid search
             retrieved = store.search(
@@ -430,6 +452,15 @@ async def ask(req: AskRequest):
 
             rerank_time = time.time() - rerank_start
             retrieval_latency.labels(method="mmr").observe(rerank_time)
+
+            # Record reranking metrics
+            record_reranking(
+                method="mmr",
+                candidates=len(retrieved) + req.top_k,  # Approximate original candidates
+                latency_seconds=rerank_time,
+                diversity_score=settings.MMR_LAMBDA,  # Lambda as proxy for diversity
+            )
+
             rerank_method = "MMR"
 
         elif reranker and retrieved:
@@ -441,6 +472,14 @@ async def ask(req: AskRequest):
 
             rerank_time = time.time() - rerank_start
             retrieval_latency.labels(method="cross_encoder").observe(rerank_time)
+
+            # Record reranking metrics
+            record_reranking(
+                method="cross_encoder",
+                candidates=len(retrieved),
+                latency_seconds=rerank_time,
+            )
+
             rerank_method = "Cross-Encoder"
 
         # Build prompt with CoT
@@ -559,8 +598,29 @@ async def ask(req: AskRequest):
             model=settings.OPENROUTER_MODEL,
             success=False,
         )
-        logger.error("Ask failed", error=str(e), question=req.question)
-        raise HTTPException(status_code=500, detail=str(e))
+
+        # Classify error for better handling
+        severity, error_type = classify_error(e)
+        log_error_context(
+            e,
+            context={
+                "question": req.question[:100],
+                "endpoint": "/ask",
+                "llm_mode": settings.LLM_MODE,
+            },
+            severity=severity,
+        )
+
+        # Provide more helpful error messages
+        detail = str(e)
+        if error_type == "authentication":
+            detail = "LLM authentication failed. Please check your API key configuration."
+        elif error_type == "rate_limit":
+            detail = "LLM rate limit exceeded. Please try again later."
+        elif error_type == "connection":
+            detail = "LLM connection failed. Please check your network or API status."
+
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @app.get("/config")
@@ -568,7 +628,7 @@ def get_config():
     """Get current configuration (without sensitive data)."""
     embedder = get_embedder()
     return {
-        "version": "0.3.0",
+        "version": settings.VERSION,
         "vectorstore_mode": settings.VECTORSTORE_MODE,
         "environment": settings.ENVIRONMENT,
         "llm_mode": settings.LLM_MODE,
@@ -694,7 +754,7 @@ def list_index_papers(limit: int = Query(default=50, ge=1, le=500)):
     try:
         collection = store.client.get_collection(store.collection_name)
         results = collection.get(
-            include=["documents", "metadatas", "embeddings"]
+            include=["documents", "metadatas"]
         )
 
         # Group chunks by paper title to show unique papers

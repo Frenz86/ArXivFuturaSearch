@@ -1,3 +1,21 @@
 uv sync
 
 uv run uvicorn app.main:app --port 8000 --reload
+
+
+# Configura le variabili ambiente
+cp .env.docker.example .env
+# poi modifica .env con la tua OPENROUTER_API_KEY
+
+# Avvia i servizi
+docker compose up -d
+
+# Vedi i log
+docker compose logs -f app
+
+# Costruisci e riavvia
+docker compose up -d --build
+
+# Ferma tutto
+docker compose down
+

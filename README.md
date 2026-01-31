@@ -43,7 +43,7 @@
 
 ```bash
 # Using uv (recommended)
-uv pip install -e .
+uv sync
 
 # Or using pip
 pip install -e .
@@ -91,15 +91,8 @@ docker run -d -p 6379:6379 redis:alpine
 ### 4. Build the Index
 
 ```bash
-python -m app.main --build
-```
+uv run uvicorn app.main:app --port 8000 --reload
 
-Or use the web interface at `http://localhost:8000/web/build`
-
-### 5. Start the Server
-
-```bash
-python -m app.main
 ```
 
 Access the web interface at `http://localhost:8000`

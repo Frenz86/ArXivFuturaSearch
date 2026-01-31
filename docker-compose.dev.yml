@@ -1,0 +1,152 @@
+# =============================================================================
+# ArXiv RAG Copilot - Docker Compose for Development
+# =============================================================================
+# This configuration is optimized for local development with ChromaDB
+# (embedded vector store, no external database required)
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml --build
+#   docker compose -f docker-compose.dev.yml down
+# =============================================================================
+version: "3.9"
+
+services:
+  # =========================================================================
+  # Main Application (Development Mode)
+  # =========================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder  # Use builder stage for dev (includes more tools)
+    container_name: arxiv-rag-dev
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+      - "${PROMETHEUS_PORT:-8001}:8001"
+    environment:
+      # Environment
+      - ENVIRONMENT=development
+
+      # Vector Store: ChromaDB (embedded, no external DB needed)
+      - VECTORSTORE_MODE=chroma
+
+      # LLM Configuration
+      - LLM_MODE=${LLM_MODE:-openrouter}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-3.5-sonnet}
+      - OPENROUTER_TIMEOUT=${OPENROUTER_TIMEOUT:-120}
+      - OPENROUTER_MAX_RETRIES=${OPENROUTER_MAX_RETRIES:-3}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
+
+      # Retrieval Configuration
+      - TOP_K=${TOP_K:-5}
+      - RETRIEVAL_K=${RETRIEVAL_K:-20}
+      - CHUNK_SIZE=${CHUNK_SIZE:-900}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-150}
+
+      # Hybrid Search
+      - SEMANTIC_WEIGHT=${SEMANTIC_WEIGHT:-0.7}
+      - BM25_WEIGHT=${BM25_WEIGHT:-0.3}
+
+      # Reranking
+      - RERANK_ENABLED=${RERANK_ENABLED:-true}
+      - RERANK_MODEL=${RERANK_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      - RERANK_USE_MMR=${RERANK_USE_MMR:-true}
+      - MMR_LAMBDA=${MMR_LAMBDA:-0.5}
+
+      # Embeddings
+      - EMBED_MODEL=${EMBED_MODEL:-intfloat/multilingual-e5-large}
+
+      # Semantic Chunking
+      - USE_SEMANTIC_CHUNKING=${USE_SEMANTIC_CHUNKING:-true}
+      - SEMANTIC_SIMILARITY_THRESHOLD=${SEMANTIC_SIMILARITY_THRESHOLD:-0.7}
+
+      # Query Expansion
+      - QUERY_EXPANSION_ENABLED=${QUERY_EXPANSION_ENABLED:-true}
+      - QUERY_EXPANSION_METHOD=${QUERY_EXPANSION_METHOD:-acronym}
+
+      # Redis Cache
+      - CACHE_ENABLED=${CACHE_ENABLED:-true}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - CACHE_TTL=${CACHE_TTL:-3600}
+
+      # Monitoring
+      - METRICS_ENABLED=${METRICS_ENABLED:-true}
+      - PROMETHEUS_PORT=8001
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - LOG_FORMAT=${LOG_FORMAT:-console}  # Console format for dev
+    volumes:
+      # Mount source code for live reload (if using --reload)
+      - ./app:/app/app:ro
+      - ./templates:/app/templates:ro
+      # Persist data directory (ChromaDB, raw data, processed data)
+      - arxiv_dev_data:/app/data
+      # HuggingFace cache for models
+      - hf_cache_dev:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - arxiv_dev_network
+    # Enable hot reload in development
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # =========================================================================
+  # Redis - Caching Layer
+  # =========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: arxiv-redis-dev
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory ${REDIS_MAX_MEMORY:-128mb}
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - arxiv_dev_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  arxiv_dev_network:
+    name: arxiv_dev_network
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  # Application data (ChromaDB, downloaded papers, etc.)
+  arxiv_dev_data:
+    name: arxiv_dev_data
+    driver: local
+
+  # Redis persistence
+  redis_dev_data:
+    name: arxiv_redis_dev_data
+    driver: local
+
+  # HuggingFace model cache
+  hf_cache_dev:
+    name: arxiv_hf_cache_dev
+    driver: local

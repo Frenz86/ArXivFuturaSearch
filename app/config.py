@@ -4,11 +4,27 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Environment
+    ENVIRONMENT: str = "development"  # "development" or "production"
+
+    # Vector Store Configuration
+    # Options: "chroma" (local, dev) or "pgvector" (PostgreSQL, production)
+    VECTORSTORE_MODE: str = "chroma"
+
     # Data
     DATA_DIR: str = "data"
     RAW_DIR: str = "data/raw"
     PROCESSED_DIR: str = "data/processed"
     CHROMA_DIR: str = "data/chroma_db"
+
+    # PostgreSQL Configuration (for pgvector in production)
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_DB: str = "arxiv_rag"
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "postgres"
+    POSTGRES_POOL_SIZE: int = 10
+    POSTGRES_MAX_OVERFLOW: int = 20
 
     # Retrieval
     TOP_K: int = 5

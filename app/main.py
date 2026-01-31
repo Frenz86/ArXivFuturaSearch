@@ -38,13 +38,13 @@ from app.metrics import (
 )
 from app.logging_config import get_logger
 
-# Import ChromaDB vector store
-from app.vectorstore_chroma import ChromaHybridStore as VectorStore
+# Import vector store factory (supports ChromaDB and Pgvector)
+from app.vectorstore import get_vectorstore, VectorStoreInterface
 
 logger = get_logger(__name__)
 
 # Global store instance (loaded on startup)
-_store: Optional[VectorStore] = None
+_store: Optional[VectorStoreInterface] = None
 
 
 @asynccontextmanager
@@ -70,15 +70,15 @@ async def lifespan(app: FastAPI):
         logger.info("Pre-loading reranker model...", model=settings.RERANK_MODEL)
         get_reranker()
 
-    # Initialize ChromaDB vector store
-    logger.info("Initializing ChromaDB vector store...")
+    # Initialize vector store (ChromaDB or Pgvector based on config)
+    logger.info("Initializing vector store...", mode=settings.VECTORSTORE_MODE)
     try:
-        _store = VectorStore(collection_name="arxiv_papers")
+        _store = get_vectorstore(collection_name="arxiv_papers")
         doc_count = _store.count()
-        logger.info("ChromaDB loaded", documents=doc_count)
+        logger.info("Vector store loaded", documents=doc_count, mode=settings.VECTORSTORE_MODE)
         update_index_stats(documents=doc_count, chunks=doc_count)
     except Exception as e:
-        logger.warning("ChromaDB initialization failed", error=str(e))
+        logger.warning("Vector store initialization failed", error=str(e))
 
     yield
 
@@ -137,7 +137,9 @@ def ensure_dirs() -> None:
     """Create necessary directories if they don't exist."""
     os.makedirs(settings.RAW_DIR, exist_ok=True)
     os.makedirs(settings.PROCESSED_DIR, exist_ok=True)
-    os.makedirs(settings.CHROMA_DIR, exist_ok=True)
+    # Only create ChromaDB directory if using ChromaDB
+    if settings.VECTORSTORE_MODE == "chroma":
+        os.makedirs(settings.CHROMA_DIR, exist_ok=True)
 
 
 async def build_index_async(query: str, max_results: int = 30) -> dict:
@@ -185,9 +187,9 @@ async def build_index_async(query: str, max_results: int = 30) -> dict:
     logger.info("Generating embeddings", count=len(texts))
     vectors = embedder.embed(texts, show_progress=True)
 
-    # Build ChromaDB index
+    # Build vector store index (ChromaDB or Pgvector)
     if _store is None:
-        _store = VectorStore(collection_name="arxiv_papers")
+        _store = get_vectorstore(collection_name="arxiv_papers")
     else:
         # Reset existing collection
         _store.reset()
@@ -209,12 +211,12 @@ async def build_index_async(query: str, max_results: int = 30) -> dict:
         "papers": len(papers),
         "chunks": len(chunks),
         "dim": int(vectors.shape[1]),
-        "vectorstore_mode": "chroma",
+        "vectorstore_mode": settings.VECTORSTORE_MODE,
         "semantic_chunking": use_semantic,
     }
 
 
-def get_store() -> VectorStore:
+def get_store() -> VectorStoreInterface:
     """Get the loaded store or raise error."""
     if _store is None:
         raise HTTPException(
@@ -222,11 +224,6 @@ def get_store() -> VectorStore:
             detail="Index not found. Build it first via POST /build",
         )
     return _store
-
-
-def ensure_chroma_dir():
-    """Create ChromaDB directory if needed."""
-    os.makedirs(settings.CHROMA_DIR, exist_ok=True)
 
 
 # API Endpoints
@@ -555,7 +552,8 @@ def get_config():
     embedder = get_embedder()
     return {
         "version": "0.3.0",
-        "vectorstore_mode": "chroma",
+        "vectorstore_mode": settings.VECTORSTORE_MODE,
+        "environment": settings.ENVIRONMENT,
         "llm_mode": settings.LLM_MODE,
         "openrouter_model": settings.OPENROUTER_MODEL,
         "embed_model": settings.EMBED_MODEL,

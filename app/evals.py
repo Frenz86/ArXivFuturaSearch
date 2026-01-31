@@ -17,8 +17,8 @@ from app.embeddings import get_embedder, get_reranker, maximal_marginal_relevanc
 from app.rag import build_prompt, llm_generate_async
 from app.logging_config import get_logger
 
-# Import ChromaDB vector store
-from app.vectorstore_chroma import ChromaHybridStore as VectorStore
+# Import vector store factory (supports ChromaDB and Pgvector)
+from app.vectorstore import get_vectorstore, VectorStoreInterface
 
 # RAGAS imports
 from ragas import evaluate
@@ -63,9 +63,9 @@ class EvalResult:
     config: EvalConfig
 
 
-def load_store() -> VectorStore:
+def load_store() -> VectorStoreInterface:
     """Load the vector store."""
-    return VectorStore(collection_name=CHROMA_COLLECTION)
+    return get_vectorstore(collection_name=CHROMA_COLLECTION)
 
 
 async def rag_answer_async(

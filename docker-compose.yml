@@ -1,8 +1,46 @@
+# =============================================================================
+# ArXiv RAG Copilot - Docker Compose for Production
+# =============================================================================
+# This configuration is optimized for production with PostgreSQL + pgvector
+# (scalable, persistent, ACID-compliant vector store)
+#
+# Usage:
+#   docker compose up -d
+#   docker compose --build
+#   docker compose down
+# =============================================================================
 version: "3.9"
 
 services:
   # =========================================================================
-  # Main Application
+  # PostgreSQL + pgvector - Production Vector Store
+  # =========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: arxiv-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-arxiv_rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-arxiv_rag}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Init script to ensure pgvector extension is installed
+      - ./scripts/init-postgres.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - arxiv_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arxiv_rag} -d ${POSTGRES_DB:-arxiv_rag}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # =========================================================================
+  # Main Application (Production Mode)
   # =========================================================================
   app:
     build:
@@ -11,17 +49,28 @@ services:
     container_name: arxiv-rag-copilot
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-8000}:8000"    # FastAPI application
-      - "${PROMETHEUS_PORT:-8001}:8001"  # Prometheus metrics (optional)
+      - "${APP_PORT:-8000}:8000"
+      - "${PROMETHEUS_PORT:-8001}:8001"
     environment:
+      # Environment
+      - ENVIRONMENT=production
+
+      # Vector Store: Pgvector (PostgreSQL)
+      - VECTORSTORE_MODE=pgvector
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-arxiv_rag}
+      - POSTGRES_USER=${POSTGRES_USER:-arxiv_rag}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_POOL_SIZE=${POSTGRES_POOL_SIZE:-10}
+      - POSTGRES_MAX_OVERFLOW=${POSTGRES_MAX_OVERFLOW:-20}
+
       # LLM Configuration
       - LLM_MODE=${LLM_MODE:-openrouter}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-3.5-sonnet}
       - OPENROUTER_TIMEOUT=${OPENROUTER_TIMEOUT:-120}
       - OPENROUTER_MAX_RETRIES=${OPENROUTER_MAX_RETRIES:-3}
-
-      # Ollama (if using local LLM)
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
 
@@ -68,11 +117,13 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FORMAT=${LOG_FORMAT:-json}
     volumes:
-      # Persist data directory (ChromaDB, raw data, processed data)
+      # Persist data directory (raw data, processed data)
       - arxiv_data:/app/data
       # HuggingFace cache for models (embeddings, reranking)
       - hf_cache:/root/.cache/huggingface
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     networks:
@@ -82,7 +133,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
   # =========================================================================
   # Redis - Caching Layer
@@ -183,7 +234,12 @@ networks:
 # Volumes
 # =============================================================================
 volumes:
-  # Application data (ChromaDB, downloaded papers, etc.)
+  # PostgreSQL data (vector embeddings and documents)
+  postgres_data:
+    name: arxiv_postgres_data
+    driver: local
+
+  # Application data (raw downloads, processed results)
   arxiv_data:
     name: arxiv_data
     driver: local

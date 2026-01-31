@@ -3,6 +3,14 @@ uv sync
 uv run uvicorn app.main:app --port 8000 --reload
 
 
+# Development (ChromaDB)
+VECTORSTORE_MODE=chroma
+
+# Production (PostgreSQL + pgvector)
+VECTORSTORE_MODE=pgvecto
+
+
+
 # Configura le variabili ambiente
 cp .env.docker.example .env
 # poi modifica .env con la tua OPENROUTER_API_KEY

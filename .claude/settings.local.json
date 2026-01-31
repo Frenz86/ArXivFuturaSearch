@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(uv run python scripts/add_license_headers.py:*)"
-    ]
-  }
-}

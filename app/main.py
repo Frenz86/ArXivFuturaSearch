@@ -1,5 +1,19 @@
 """FastAPI server for ArXiv Futura Search v0.3.0 with LangChain, ChromaDB, caching, and metrics."""
 
+
+# Copyright 2025 ArXivFuturaSearch Contributors
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import json
 import numpy as np
@@ -83,6 +97,26 @@ async def lifespan(app: FastAPI):
         logger.info("Pre-loading reranker model...", model=settings.RERANK_MODEL)
         get_reranker()
 
+    # Initialize OpenTelemetry if enabled
+    if settings.ENVIRONMENT != "test":
+        try:
+            from app.tracing import init_telemetry, OpenTelemetryConfig
+
+            otel_config = OpenTelemetryConfig(
+                service_name="arxiv_futura_search",
+                service_version=settings.VERSION,
+                enabled=True,
+                trace_exporter="console",  # Use console for dev, "otlp" for production
+                metrics_exporter="console",
+            )
+
+            await init_telemetry(app, otel_config)
+            logger.info("OpenTelemetry initialized", export="console")
+        except ImportError:
+            logger.info("OpenTelemetry packages not installed")
+        except Exception as e:
+            logger.warning("OpenTelemetry initialization failed", error=str(e))
+
     # Initialize vector store (ChromaDB or Pgvector based on config)
     logger.info("Initializing vector store...", mode=settings.VECTORSTORE_MODE)
     try:
@@ -99,6 +133,14 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down ArXiv Futura Search")
+
+    # Shutdown OpenTelemetry
+    try:
+        from app.tracing import shutdown_telemetry
+        shutdown_telemetry()
+        logger.info("OpenTelemetry shutdown complete")
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -201,7 +243,8 @@ async def build_index_async(query: str, max_results: int = 30) -> dict:
     )
     texts = [c.text for c in chunks]
     chunk_ids = [c.chunk_id for c in chunks]
-    metas = [c.meta for c in chunks]
+    # Convert ChunkMetadata Pydantic models to dicts for vector store
+    metas = [c.meta.model_dump() if hasattr(c.meta, 'model_dump') else c.meta for c in chunks]
 
     # Generate embeddings
     logger.info("Generating embeddings", count=len(texts))
@@ -737,6 +780,312 @@ async def search_only(
             for i, r in enumerate(retrieved)
         ],
     }
+
+
+# =============================================================================
+# ADVANCED SEARCH ENDPOINTS
+# =============================================================================
+
+@app.post("/search/hybrid")
+async def hybrid_search(req: AskRequest):
+    """
+    Advanced hybrid search combining BM25 and vector search with RRF.
+
+    Provides improved retrieval by combining dense and sparse representations.
+    """
+    try:
+        from app.hybrid_search import get_hybrid_search_engine
+
+        store = get_store()
+        embedder = get_embedder()
+
+        # Get or create hybrid search engine
+        engine = get_hybrid_search_engine(store.vectorstore)
+
+        # Index documents if not already indexed
+        if not engine._indexed:
+            try:
+                # Get all documents from store
+                collection = store.client.get_collection(store.collection_name)
+                results = collection.get(include=["documents"])
+                texts = results.get("documents", [])
+                await engine.index_documents(texts[:1000])  # Limit for initial indexing
+            except Exception as e:
+                logger.warning("BM25 indexing failed, using vector search only", error=str(e))
+
+        # Perform hybrid search
+        results = await engine.search(
+            query=req.question,
+            top_k=req.top_k,
+            search_kwargs={"k": req.top_k * 2} if req.filters else None,
+        )
+
+        return {
+            "query": req.question,
+            "method": "hybrid_bm25_vector",
+            "results": results[:req.top_k],
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Hybrid search not available")
+    except Exception as e:
+        logger.error("Hybrid search failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/search/multi-query")
+async def multi_query_search(req: AskRequest):
+    """
+    Multi-query retrieval with LLM query expansion.
+
+    Generates multiple query variants using LLM and merges results using RRF.
+    """
+    try:
+        from app.multi_query import get_multi_query_retriever
+        from app.rag import get_chat_model
+
+        store = get_store()
+        embedder = get_embedder()
+        llm = get_chat_model()
+
+        # Get multi-query retriever
+        retriever = get_multi_query_retriever(llm)
+
+        # Generate query variants
+        queries = await retriever.generate_queries(req.question, include_original=True)
+
+        # Define retrieval function
+        async def retrieve_func(query: str, k: int):
+            q_vec = embedder.embed_query(query)
+            return store.search(
+                q_vec,
+                query_text=query,
+                top_k=k,
+                semantic_weight=settings.SEMANTIC_WEIGHT,
+                bm25_weight=settings.BM25_WEIGHT,
+            )
+
+        # Retrieve and merge results
+        results = await retriever.retrieve(
+            queries=queries,
+            retriever_func=retrieve_func,
+            top_k=req.top_k,
+        )
+
+        return {
+            "original_query": req.question,
+            "expanded_queries": queries,
+            "method": "multi_query_rrf",
+            "results": results,
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Multi-query search not available")
+    except Exception as e:
+        logger.error("Multi-query search failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/search/rerank")
+async def reranked_search(req: AskRequest):
+    """
+    Search with cross-encoder re-ranking for improved precision.
+
+    Uses a cross-encoder model to re-rank search results based on
+    query-document relevance.
+    """
+    try:
+        from app.reranking import get_cross_encoder_reranker
+
+        store = get_store()
+        embedder = get_embedder()
+
+        # Initial retrieval
+        q_vec = embedder.embed_query(req.question)
+        candidates = store.search(
+            q_vec,
+            query_text=req.question,
+            top_k=req.top_k * 3,  # Get more candidates for re-ranking
+            semantic_weight=settings.SEMANTIC_WEIGHT,
+            bm25_weight=settings.BM25_WEIGHT,
+        )
+
+        # Convert to reranker format
+        documents = [
+            {
+                "text": r["text"],
+                "title": r["meta"].get("title", ""),
+                "link": r["meta"].get("link", ""),
+            }
+            for r in candidates
+        ]
+
+        # Re-rank with cross-encoder
+        reranker = get_cross_encoder_reranker()
+        reranked = await reranker.rerank(req.question, documents, top_k=req.top_k)
+
+        return {
+            "query": req.question,
+            "method": "cross_encoder_rerank",
+            "candidates_retrieved": len(candidates),
+            "results": reranked,
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Cross-encoder reranking not available")
+    except Exception as e:
+        logger.error("Reranked search failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/suggest")
+async def autocomplete_suggestions(
+    q: str = Query(..., description="Query prefix"),
+    limit: int = Query(default=10, ge=1, le=20),
+):
+    """
+    Get autocomplete suggestions for a query prefix.
+
+    Returns relevant query suggestions based on indexed content and query history.
+    """
+    try:
+        from app.autocomplete import get_autocompleter, get_trending_queries
+
+        autocompleter = get_autocompleter()
+
+        # Index documents if not already indexed
+        if not autocompleter._vocabulary:
+            try:
+                store = get_store()
+                collection = store.client.get_collection(store.collection_name)
+                results = collection.get(include=["documents"])
+                documents = [{"text": doc} for doc in results.get("documents", [])[:1000]]
+                autocompleter.index_documents(documents)
+            except Exception as e:
+                logger.warning("Autocomplete indexing failed", error=str(e))
+
+        # Get suggestions
+        suggestions = autocompleter.get_suggestions(q, max_results=limit)
+
+        # Add trending queries if prefix is empty
+        if not q.strip() and limit > len(suggestions):
+            trending = get_trending_queries()
+            trending_suggestions = trending.get_trending(limit=limit - len(suggestions))
+            suggestions.extend(trending_suggestions)
+
+        return {
+            "prefix": q,
+            "suggestions": suggestions,
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Autocomplete not available")
+    except Exception as e:
+        logger.error("Autocomplete failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# CACHE AND TELEMETRY ENDPOINTS
+# =============================================================================
+
+@app.get("/cache/redis/status")
+async def redis_cache_status():
+    """Get Redis cache status and statistics."""
+    try:
+        from app.redis_cache import get_redis_cache
+
+        cache = get_redis_cache()
+        info = await cache.get_info()
+
+        return {
+            "enabled": cache._client is not None,
+            "prefix": cache.prefix,
+            "serializer": "pickle" if isinstance(cache.serializer, type(cache).PickleSerializer) else "json",
+            "info": info,
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Redis cache not available")
+    except Exception as e:
+        logger.error("Redis status check failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/background-tasks/status")
+async def background_tasks_status():
+    """Get status of background tasks (ArXiv feed updates)."""
+    try:
+        from app.background_tasks import get_task_manager
+
+        manager = get_task_manager()
+        status = manager.get_status()
+
+        return {
+            "tasks": status,
+            "running": manager._running,
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Background tasks not available")
+    except Exception as e:
+        logger.error("Background tasks status failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/background-tasks/start")
+async def start_background_tasks():
+    """Start all background tasks."""
+    try:
+        from app.background_tasks import get_task_manager
+
+        manager = get_task_manager()
+        await manager.start_all()
+
+        return {"status": "ok", "message": "Background tasks started"}
+
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Background tasks not available")
+    except Exception as e:
+        logger.error("Failed to start background tasks", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/background-tasks/stop")
+async def stop_background_tasks():
+    """Stop all background tasks."""
+    try:
+        from app.background_tasks import get_task_manager
+
+        manager = get_task_manager()
+        await manager.stop_all()
+
+        return {"status": "ok", "message": "Background tasks stopped"}
+
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Background tasks not available")
+    except Exception as e:
+        logger.error("Failed to stop background tasks", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/tracing/status")
+async def tracing_status():
+    """Get OpenTelemetry tracing status."""
+    try:
+        from app.tracing import _tracer_provider, _meter_provider
+
+        return {
+            "tracing_enabled": _tracer_provider is not None,
+            "metrics_enabled": _meter_provider is not None,
+            "otel_exporter": settings.OTEL_EXPORTER_OTLP_ENDPOINT,
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=501, detail="OpenTelemetry not available")
+    except Exception as e:
+        logger.error("Tracing status failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================

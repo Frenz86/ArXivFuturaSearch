@@ -4,9 +4,22 @@
 
 [![Python](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.128+-green.svg)](https://fastapi.tiangolo.com)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 ## 🚀 What's New in v0.4.0
+
+### Advanced Search Features
+- **🔍 Hybrid Search**: BM25 (keyword) + Vector (semantic) with Reciprocal Rank Fusion
+- **🎯 Multi-Query Retrieval**: LLM-generated query variants merged with RRF
+- **🔄 Cross-Encoder Reranking**: Precision re-ranking with ms-marco-MiniLM-L-6-v2
+- **💡 Query Autocomplete**: Prefix-based, fuzzy matching, and semantic suggestions
+- **⚖️ MMR Diversification**: Balanced relevance-diversity result selection
+
+### Infrastructure & Observability
+- **📡 OpenTelemetry Tracing**: Distributed tracing with OTLP/Jaeger export
+- **📦 Redis Distributed Cache**: Multi-instance caching with connection pooling
+- **🔄 Background Tasks**: Automatic ArXiv RSS feed parsing and index updates
+- **📊 Enhanced Metrics**: Query expansion, reranking, and circuit breaker monitoring
 
 ### Security & Reliability
 - **🔒 Security Middleware**: CORS, rate limiting, input validation, request correlation ID
@@ -318,12 +331,37 @@ arxiv-rag-copilot/
 | `GET` | `/health` | System health check |
 | `GET` | `/config` | Current configuration |
 
+### Advanced Search
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/search/hybrid` | Hybrid semantic + keyword search |
+| `POST` | `/search/multi-query` | Multi-query retrieval with expansion |
+| `POST` | `/search/rerank` | Cross-encoder reranked search |
+| `GET` | `/suggest` | Query autocomplete suggestions |
+
 ### Search & Index
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/index/papers` | List all indexed papers |
 | `GET` | `/index/stats` | Index statistics |
+
+### Background Tasks
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/background-tasks/status` | Background task manager status |
+| `POST` | `/background-tasks/start` | Start ArXiv feed update task |
+| `POST` | `/background-tasks/stop` | Stop background tasks |
+| `GET` | `/background-tasks/jobs` | List active background jobs |
+
+### Tracing & Telemetry
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/tracing/status` | OpenTelemetry tracing status |
+| `POST` | `/tracing/flush` | Force flush trace data |
 
 ### Evaluation (RAGAS)
 
@@ -683,7 +721,21 @@ Contributions welcome! Please:
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+Copyright 2025 ArXivFuturaSearch Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ---
 

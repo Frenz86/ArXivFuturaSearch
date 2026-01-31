@@ -1,8 +1,22 @@
+
+# Copyright 2025 ArXivFuturaSearch Contributors
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # Single source of truth for version
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 
 class Settings(BaseSettings):
@@ -97,6 +111,14 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"  # "json" or "console"
+
+    # OpenTelemetry
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4317"  # OTLP collector
+    OTEL_EXPORTER_JAEGER_HOST: str = "localhost"
+    OTEL_EXPORTER_JAEGER_PORT: int = 6831
+    OTEL_SERVICE_NAME: str = "arxiv-futura-search"
+    OTEL_TRACE_EXPORTER: str = "console"  # "console", "otlp", "jaeger", "none"
+    OTEL_METRICS_EXPORTER: str = "console"  # "console", "otlp", "none"
 
 
 settings = Settings()

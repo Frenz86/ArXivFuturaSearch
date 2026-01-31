@@ -1,7 +1,0 @@
-# Marker file for PEP 561.
-# Indicates that this package supports type checking.
-#
-# This enables external tools (mypy, pyright, etc.) to recognize
-# that the 'app' package provides inline type hints.
-
-partial

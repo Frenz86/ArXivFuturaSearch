@@ -1,5 +1,19 @@
 """Middleware for security, observability, and cross-cutting concerns.
 
+
+# Copyright 2025 ArXivFuturaSearch Contributors
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 Includes rate limiting, CORS, correlation ID, and security validation.
 """
 
@@ -324,7 +338,16 @@ def setup_middleware(app) -> None:
     # 1. Security validation (no-op after startup)
     app.add_middleware(SecurityValidationMiddleware)
 
-    # 2. Rate limiting (configurable via env)
+    # 2. Request validation with Pydantic schemas
+    try:
+        from app.validation_middleware import ValidationMiddleware
+        enable_validation = settings.ENVIRONMENT != "test"
+        app.add_middleware(ValidationMiddleware, enable_validation=enable_validation)
+        logger.info("Pydantic validation middleware enabled")
+    except ImportError:
+        logger.warning("Validation middleware not available")
+
+    # 3. Rate limiting (configurable via env)
     rate_limit_rpm = int(os.getenv("RATE_LIMIT_RPM", "60"))
     if rate_limit_rpm > 0:
         app.add_middleware(RateLimitMiddleware, requests_per_minute=rate_limit_rpm)
@@ -332,10 +355,10 @@ def setup_middleware(app) -> None:
     else:
         logger.info("Rate limiting disabled")
 
-    # 3. Request logging
+    # 4. Request logging
     app.add_middleware(RequestLoggingMiddleware)
 
-    # 4. Correlation ID (always last to wrap everything)
+    # 5. Correlation ID (always last to wrap everything)
     app.add_middleware(CorrelationIDMiddleware)
 
     # CORS is added separately via setup_cors_middleware

@@ -227,6 +227,23 @@ def get_store() -> VectorStoreInterface:
 
 
 # API Endpoints
+def count_unique_documents() -> int:
+    """Count unique documents by title from the vector store."""
+    if _store is None:
+        return 0
+    try:
+        collection = _store.client.get_collection(_store.collection_name)
+        results = collection.get(include=["metadatas"])
+        titles = set()
+        for meta in results.get("metadatas", []):
+            title = meta.get("title")
+            if title:
+                titles.add(title)
+        return len(titles)
+    except Exception:
+        return 0
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Comprehensive health check endpoint."""
@@ -238,7 +255,7 @@ async def health_check():
         llm_mode=settings.LLM_MODE,
         llm_health=llm_health,
         index_loaded=_store is not None,
-        index_documents=_store.count() if _store else 0,
+        index_documents=count_unique_documents(),
         embedder_loaded=embedder is not None,
         embedder_model=settings.EMBED_MODEL if embedder else None,
         reranker_enabled=settings.RERANK_ENABLED,

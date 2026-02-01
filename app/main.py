@@ -1,4 +1,4 @@
-"""FastAPI server for ArXiv Futura Search v0.3.0 with LangChain, ChromaDB, caching, and metrics."""
+"""FastAPI server for ArXiv Futura Search v0.4.0 with LangChain, ChromaDB, caching, and metrics."""
 
 
 # Copyright 2025 ArXivFuturaSearch Contributors
@@ -119,11 +119,11 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="ArXiv Futura Search",
-    description="Hybrid RAG pipeline for ML research papers with OpenRouter integration",
-    version=settings.VERSION,
-    lifespan=lifespan,
-)
+            title="ArXiv Futura Search",
+            description="Hybrid RAG pipeline for ML research papers with OpenRouter integration",
+            version=settings.VERSION,
+            lifespan=lifespan,
+            )
 
 # Setup middleware
 setup_cors_middleware(app)

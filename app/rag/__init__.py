@@ -1,36 +1,38 @@
-"""Compatibility shim for rag imports.
+"""RAG package for prompts, LLM integration, and chain creation."""
 
-This file maintains backward compatibility by re-exporting from the new rag package.
-Deprecated: Import from app.rag.{prompts,llm,rag_chain} instead.
-"""
-
-# Re-export everything from the rag package
-from app.rag import (
+from app.rag.prompts import (
     COT_PROMPT_TEMPLATE,
     SIMPLE_PROMPT_TEMPLATE,
     format_context,
     build_prompt,
+)
+from app.rag.llm import (
     get_llm,
     llm_generate_async,
     llm_generate_stream,
     llm_generate,
     check_llm_health,
     check_openrouter_health,
+)
+from app.rag.rag_chain import (
     create_rag_chain,
     list_openrouter_models,
 )
 
 __all__ = [
+    # Prompts
     "COT_PROMPT_TEMPLATE",
     "SIMPLE_PROMPT_TEMPLATE",
     "format_context",
     "build_prompt",
+    # LLM
     "get_llm",
     "llm_generate_async",
     "llm_generate_stream",
     "llm_generate",
     "check_llm_health",
     "check_openrouter_health",
+    # RAG Chain
     "create_rag_chain",
     "list_openrouter_models",
 ]

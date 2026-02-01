@@ -1,5 +1,5 @@
 """FastAPI server for ArXiv Futura Search v0.4.0 with LangChain, ChromaDB, caching, and metrics."""
-
+## https://github.com/Frenz86/ArXivFuturaSearch
 
 # Copyright 2025 ArXivFuturaSearch Contributors
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -124,6 +124,12 @@ app = FastAPI(
             version=settings.VERSION,
             lifespan=lifespan,
             )
+
+# Favicon route to suppress 404 logs
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Redirect to SVG favicon."""
+    return RedirectResponse(url="/static/favicon.svg")
 
 # Setup middleware
 setup_cors_middleware(app)

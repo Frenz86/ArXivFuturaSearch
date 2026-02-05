@@ -346,3 +346,370 @@ def log_validation_result(
             error=error,
             **context
         )
+
+
+# =============================================================================
+# PROMPT INJECTION DETECTION
+# =============================================================================
+
+# Prompt injection patterns for LLM security
+PROMPT_INJECTION_PATTERNS = [
+    r"ignore\s+(previous|all)\s+instructions?",
+    r"disregard\s+(previous|all)\s+instructions?",
+    r"forget\s+(previous|all)\s+instructions?",
+    r"(new|updated)\s+instructions?:?",
+    r"override\s+instructions?",
+    r"system\s*:\s*you\s+are",
+    r"<\|(.*?)\|>",  # Special instruction delimiters
+    r"<<.*?>>",  # Angle bracket delimiters
+    r"\[SYSTEM\]:?",
+    r"\[INSTRUCTIONS?\]:?",
+    r"act\s+as\s+(a|an)?\s*.*?",
+    r"pretend\s+(to\s+be|you\s+are)",
+    r"roleplay\s+as",
+    r"assume\s+the\s+role",
+    r"you\s+are\s+now\s+(a|an)",
+    r"from\s+now\s+on\s+you\s+are",
+    r"i\s+want\s+you\s+to\s+act\s+as",
+    r"you\s+must\s+(ignore|forget|disregard)",
+    r"instead\s+of\s+.*\s+,",
+    r"no\s+matter\s+what",
+    r"above\s+instructions?\s+(are|were)",
+    r"previous\s+(instructions?|text|prompts?)",
+    r"<\|.*?\|>",  # Custom delimiters
+]
+
+# Compile all patterns
+PROMPT_INJECTION_REGEX = re.compile(
+    "|".join(f"(?:{pattern})" for pattern in PROMPT_INJECTION_PATTERNS),
+    re.IGNORECASE | re.MULTILINE
+)
+
+
+def validate_prompt_injection(text: str) -> tuple[bool, list[str]]:
+    """
+    Detect prompt injection attempts in text.
+
+    Args:
+        text: Input text to check
+
+    Returns:
+        Tuple of (is_injection, list_of_patterns_found)
+    """
+    if not isinstance(text, str):
+        return False, []
+
+    threats = []
+    matches = PROMPT_INJECTION_REGEX.finditer(text)
+
+    for match in matches:
+        matched_text = match.group(0)
+        if matched_text not in threats:
+            threats.append(matched_text)
+
+    if threats:
+        logger.warning(
+            "Prompt injection detected",
+            patterns_found=len(threats),
+            text_preview=text[:100],
+            threats=threats[:5],  # Log first 5
+        )
+
+    return len(threats) > 0, threats
+
+
+def sanitize_search_query(
+    query: str,
+    max_length: int = 2000,
+    check_prompt_injection: bool = True,
+) -> str:
+    """
+    Sanitize search query with enhanced security checks.
+
+    Args:
+        query: Search query to sanitize
+        max_length: Maximum allowed length
+        check_prompt_injection: Whether to check for prompt injection
+
+    Returns:
+        Sanitized query
+
+    Raises:
+        ValueError: If query contains prompt injection
+    """
+    if not isinstance(query, str):
+        return ""
+
+    # Check for prompt injection
+    if check_prompt_injection:
+        is_injection, patterns = validate_prompt_injection(query)
+        if is_injection:
+            raise ValueError("Query contains suspicious content that may be an injection attempt")
+
+    # Remove null bytes
+    query = query.replace("\x00", "")
+
+    # Normalize whitespace
+    query = " ".join(query.split())
+
+    # Truncate if too long
+    if len(query) > max_length:
+        logger.warning(
+            "Query truncated",
+            original_length=len(query),
+            max_length=max_length,
+        )
+        query = query[:max_length]
+
+    return query
+
+
+# =============================================================================
+# FILE UPLOAD VALIDATION
+# =============================================================================
+
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {".pdf", ".txt", ".json", ".csv", ".md", ".markdown"}
+
+# Maximum file size (10MB)
+MAX_FILE_SIZE = 10 * 1024 * 1024
+
+# Suspicious filename patterns
+SUSPICIOUS_FILENAME_PATTERNS = [
+    re.compile(r"\.\."),  # Path traversal
+    re.compile(r"\.php$", re.I),  # Web shells
+    re.compile(r"\.jsp$", re.I),
+    re.compile(r"\.asp$", re.I),
+    re.compile(r"\.exe$", re.I),  # Executables
+    re.compile(r"\.sh$", re.I),  # Shell scripts
+    re.compile(r"\.bat$", re.I),
+    re.compile(r"\.cmd$", re.I),
+    re.compile(r"\.htaccess$", re.I),  # Apache config
+    re.compile(r"\.htpasswd$", re.I),
+]
+
+
+def validate_file_upload(
+    filename: str,
+    file_size: int,
+    content_type: str,
+) -> tuple[bool, Optional[str]]:
+    """
+    Validate file upload for security.
+
+    Args:
+        filename: Name of the uploaded file
+        file_size: Size in bytes
+        content_type: MIME type
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    # Check file extension
+    from pathlib import Path
+
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        logger.warning(
+            "Invalid file extension",
+            filename=filename,
+            extension=ext,
+        )
+        return False, f"File type {ext} is not allowed. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
+
+    # Check file size
+    if file_size > MAX_FILE_SIZE:
+        logger.warning(
+            "File too large",
+            filename=filename,
+            size=file_size,
+            max_size=MAX_FILE_SIZE,
+        )
+        return False, f"File size exceeds maximum of {MAX_FILE_SIZE // (1024*1024)}MB"
+
+    # Check for suspicious filenames
+    filename_lower = filename.lower()
+    for pattern in SUSPICIOUS_FILENAME_PATTERNS:
+        if pattern.search(filename):
+            logger.warning(
+                "Suspicious filename detected",
+                filename=filename,
+                pattern=pattern.pattern,
+            )
+            return False, "Filename contains suspicious patterns"
+
+    return True, None
+
+
+# =============================================================================
+# ARXIV QUERY VALIDATION
+# =============================================================================
+
+def validate_arxiv_query(query: str) -> tuple[bool, Optional[str]]:
+    """
+    Validate ArXiv search query with enhanced checks.
+
+    Args:
+        query: ArXiv query string
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not query or not query.strip():
+        return False, "Query cannot be empty"
+
+    if not isinstance(query, str):
+        return False, "Query must be a string"
+
+    # Check length
+    if len(query) > 500:
+        return False, "Query too long (max 500 characters)"
+
+    # Check for balanced parentheses
+    if query.count("(") != query.count(")"):
+        return False, "Unbalanced parentheses in query"
+
+    if query.count("[") != query.count("]"):
+        return False, "Unbalanced brackets in query"
+
+    # Check for balanced quotes
+    if query.count('"') % 2 != 0:
+        return False, "Unbalanced quotes in query"
+
+    if query.count("'") % 2 != 0:
+        return False, "Unbalanced single quotes in query"
+
+    # Check for dangerous operators
+    dangerous_patterns = [
+        ("&&", "shell operators"),
+        ("||", "shell operators"),
+        (";", "command separator"),
+        ("--", "SQL comment"),
+        ("/*", "C-style comment"),
+    ]
+
+    for pattern, name in dangerous_patterns:
+        if pattern in query:
+            logger.warning(
+                "Dangerous pattern in ArXiv query",
+                pattern=pattern,
+                description=name,
+            )
+            return False, f"Query contains invalid pattern: {name}"
+
+    # Check for prompt injection
+    is_injection, _ = validate_prompt_injection(query)
+    if is_injection:
+        return False, "Query contains suspicious patterns"
+
+    return True, None
+
+
+# =============================================================================
+# VALIDATION PYDANTIC MODELS - ENHANCED
+# =============================================================================
+
+class EnhancedValidatedAskRequest(ValidatedAskRequest):
+    """Enhanced validated request model for /ask endpoint with prompt injection detection."""
+
+    @field_validator("question")
+    @classmethod
+    def validate_question_enhanced(cls, v: str) -> str:
+        """Validate question with enhanced security checks."""
+        if not v or not v.strip():
+            raise ValueError("Question cannot be empty")
+
+        if len(v) > MAX_QUESTION_LENGTH:
+            raise ValueError(f"Question too long (max {MAX_QUESTION_LENGTH} characters)")
+
+        if len(v.strip()) < 3:
+            raise ValueError("Question too short (min 3 characters)")
+
+        # Check for prompt injection
+        is_injection, patterns = validate_prompt_injection(v)
+        if is_injection:
+            logger.warning(
+                "Prompt injection detected in question",
+                patterns=patterns,
+                question_preview=v[:100],
+            )
+            raise ValueError("Question contains invalid content that may be an injection attempt")
+
+        # Check for other threats
+        threats = detect_suspicious_patterns(v)
+        if threats:
+            logger.warning("Suspicious patterns detected", threats=threats, question=v[:100])
+            raise ValueError(f"Question contains suspicious content: {', '.join(threats)}")
+
+        return sanitize_string(v, MAX_QUESTION_LENGTH)
+
+
+# =============================================================================
+# VALIDATION MIDDLEWARE
+# =============================================================================
+
+class ValidationMiddleware:
+    """
+    Middleware for automatic request validation.
+
+    Can be used with FastAPI to validate all incoming requests.
+    """
+
+    def __init__(
+        self,
+        enable_prompt_injection_check: bool = True,
+        enable_file_validation: bool = True,
+        max_body_size: int = 10 * 1024 * 1024,  # 10MB
+    ):
+        """
+        Initialize validation middleware.
+
+        Args:
+            enable_prompt_injection_check: Enable prompt injection detection
+            enable_file_validation: Enable file upload validation
+            max_body_size: Maximum request body size
+        """
+        self.enable_prompt_injection_check = enable_prompt_injection_check
+        self.enable_file_validation = enable_file_validation
+        self.max_body_size = max_body_size
+
+        logger.info(
+            "ValidationMiddleware initialized",
+            prompt_injection_check=enable_prompt_injection_check,
+            file_validation=enable_file_validation,
+            max_body_size=max_body_size,
+        )
+
+    async def validate_request_body(
+        self,
+        body: dict,
+        endpoint: str,
+    ) -> tuple[bool, Optional[str], Optional[dict]]:
+        """
+        Validate request body.
+
+        Args:
+            body: Request body dictionary
+            endpoint: Endpoint path for logging
+
+        Returns:
+            Tuple of (is_valid, error_message, sanitized_body)
+        """
+        if not isinstance(body, dict):
+            return False, "Request body must be a JSON object", None
+
+        # Check for prompt injection in string values
+        if self.enable_prompt_injection_check:
+            for key, value in body.items():
+                if isinstance(value, str) and len(value) < 10000:  # Only check reasonable lengths
+                    is_injection, _ = validate_prompt_injection(value)
+                    if is_injection:
+                        return False, f"Field '{key}' contains suspicious content", None
+
+        # Sanitize body
+        try:
+            sanitized = sanitize_request_data(body)
+            return True, None, sanitized
+        except Exception as e:
+            logger.error("Sanitization error", endpoint=endpoint, error=str(e))
+            return False, f"Sanitization error: {str(e)}", None

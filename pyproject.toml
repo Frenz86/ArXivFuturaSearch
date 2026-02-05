@@ -40,6 +40,20 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.60b1",
     "opentelemetry-exporter-otlp-proto-grpc>=1.39.1",
     "opentelemetry-exporter-jaeger-thrift>=1.21.0",
+    # Pydantic for data validation
+    "pydantic>=2.0.0",
+    # Security & Authentication
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "python-multipart>=0.0.6",
+    "authlib>=1.2.1",
+    # Database (async driver)
+    "asyncpg>=0.29.0",
+    "alembic>=1.12.0",
+    # Performance
+    "tqdm>=4.66.0",
+    # Email validation
+    "email-validator>=2.1.0",
 ]
 
 [project.optional-dependencies]
@@ -51,6 +65,9 @@ dev = [
     "coverage[toml]>=7.6.0",
     "httpx>=0.28.0",
     "fakeredis>=2.25.0",
+    # Load testing
+    "locust>=2.0.0",
+    "pytest-benchmark>=4.0.0",
 ]
 
 [tool.pytest.ini_options]

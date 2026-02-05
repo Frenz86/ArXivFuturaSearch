@@ -120,5 +120,91 @@ class Settings(BaseSettings):
     OTEL_TRACE_EXPORTER: str = "console"  # "console", "otlp", "jaeger", "none"
     OTEL_METRICS_EXPORTER: str = "console"  # "console", "otlp", "none"
 
+    # =============================================================================
+    # SECURITY SETTINGS (from config_extensions.py)
+    # =============================================================================
+    SECRET_KEY: str = "changeme-secret-key"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # Password Requirements
+    PASSWORD_MIN_LENGTH: int = 8
+    PASSWORD_REQUIRE_UPPERCASE: bool = True
+    PASSWORD_REQUIRE_LOWERCASE: bool = True
+    PASSWORD_REQUIRE_DIGIT: bool = True
+    PASSWORD_REQUIRE_SPECIAL: bool = True
+
+    # OAuth Settings
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/oauth/google/callback"
+
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
+    GITHUB_REDIRECT_URI: str = "http://localhost:8000/api/auth/oauth/github/callback"
+
+    # Audit Settings
+    AUDIT_LOG_RETENTION_DAYS: int = 90
+
+    # =============================================================================
+    # PERFORMANCE SETTINGS (from config_extensions.py)
+    # =============================================================================
+    # Batch Processing
+    BATCH_PROCESSING_STRATEGY: str = "thread_parallel"  # sequential, thread_parallel, process_parallel, gpu_batched
+    EMBEDDING_BATCH_SIZE: int = 32
+    EMBEDDING_MAX_WORKERS: int = 0  # 0 = auto-detect
+    EMBEDDING_ENABLE_GPU: bool = True
+    EMBEDDING_RETRY_FAILED: bool = True
+    EMBEDDING_MAX_RETRIES: int = 3
+
+    # Connection Pooling
+    POSTGRES_ENABLE_ADAPTIVE_POOL: bool = True
+    POSTGRES_POOL_ADAPTIVE_SIZING: bool = True
+    POSTGRES_POOL_SCALE_UP_THRESHOLD: float = 0.75
+    POSTGRES_POOL_SCALE_DOWN_THRESHOLD: float = 0.25
+    POSTGRES_POOL_ADJUSTMENT_INTERVAL: int = 60
+    POSTGRES_POOL_HEALTH_CHECK_INTERVAL: int = 30
+
+    # Semantic Caching
+    SEMANTIC_CACHE_ENABLED: bool = True
+    SEMANTIC_CACHE_SIMILARITY_THRESHOLD: float = 0.85
+    SEMANTIC_CACHE_MAX_ENTRIES: int = 1000
+    SEMANTIC_CACHE_STRATEGY: str = "hybrid"  # exact_match, semantic_similarity, hybrid
+    SEMANTIC_CACHE_PRECOMPUTED_EMBEDDINGS: bool = True
+
+    # Cache Warming
+    CACHE_WARMING_ENABLED: bool = True
+    CACHE_WARMING_STATIC: bool = True
+    CACHE_WARMING_CONCURRENCY: int = 5
+
+    # =============================================================================
+    # FEATURE SETTINGS (from config_extensions.py)
+    # =============================================================================
+    # Conversation Memory
+    CONVERSATION_ENABLED: bool = True
+    MAX_CONTEXT_TOKENS: int = 8000
+    CONVERSATION_SUMMARIZATION_THRESHOLD: int = 10
+
+    # Alerts
+    ALERTS_ENABLED: bool = True
+    ALERT_CHECK_INTERVAL_MINUTES: int = 60
+
+    # Collections
+    COLLECTIONS_ENABLED: bool = True
+    PUBLIC_COLLECTIONS_ENABLED: bool = True
+    SHARE_LINK_EXPIRY_HOURS: int = 168  # 1 week
+
+    # Export
+    EXPORT_ENABLED: bool = True
+    EXPORT_TEMP_DIR: str = "data/exports"
+    EXPORT_MAX_SIZE_MB: int = 50
+
+    # =============================================================================
+    # DATABASE SETTINGS (from config_extensions.py)
+    # =============================================================================
+    # PostgreSQL (for auth, conversations, etc.)
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/arxiv_rag"
+    DATABASE_ECHO: bool = False
+
 
 settings = Settings()

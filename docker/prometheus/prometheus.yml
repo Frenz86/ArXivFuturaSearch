@@ -1,0 +1,32 @@
+# Prometheus configuration for ArXivFuturaSearch
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'arxiv-futura-search'
+
+# Alerting configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Rule files (optional)
+# rule_files:
+#   - 'alerts.yml'
+
+# Scrape configurations
+scrape_configs:
+  # Application metrics
+  - job_name: 'arxiv-app'
+    static_configs:
+      - targets: ['app:8001']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

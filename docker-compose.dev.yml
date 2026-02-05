@@ -1,15 +1,8 @@
 # =============================================================================
-# ArXiv RAG Copilot - Docker Compose for Development
+# Docker Compose for Development
+# Usage: docker-compose -f docker-compose.dev.yml up -d
 # =============================================================================
-# This configuration is optimized for local development with ChromaDB
-# (embedded vector store, no external database required)
-#
-# Usage:
-#   docker compose -f docker-compose.dev.yml up -d
-#   docker compose -f docker-compose.dev.yml --build
-#   docker compose -f docker-compose.dev.yml down
-# =============================================================================
-version: "3.9"
+version: '3.9'
 
 services:
   # =========================================================================
@@ -19,8 +12,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: builder  # Use builder stage for dev (includes more tools)
-    container_name: arxiv-rag-dev
+      target: builder
+    container_name: arxiv-app-dev
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8000}:8000"
@@ -29,78 +22,105 @@ services:
       # Environment
       - ENVIRONMENT=development
 
-      # Vector Store: ChromaDB (embedded, no external DB needed)
+      # Vector Store
       - VECTORSTORE_MODE=chroma
+      - CHROMA_DIR=/app/data/chroma_db
+
+      # Database (NEW)
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/arxiv_rag
+      - DATABASE_ECHO=false
+
+      # Security (NEW)
+      - SECRET_KEY=${SECRET_KEY:-changeme-secret-key}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
 
       # LLM Configuration
       - LLM_MODE=${LLM_MODE:-openrouter}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-3.5-sonnet}
-      - OPENROUTER_TIMEOUT=${OPENROUTER_TIMEOUT:-120}
-      - OPENROUTER_MAX_RETRIES=${OPENROUTER_MAX_RETRIES:-3}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
-
-      # Retrieval Configuration
-      - TOP_K=${TOP_K:-5}
-      - RETRIEVAL_K=${RETRIEVAL_K:-20}
-      - CHUNK_SIZE=${CHUNK_SIZE:-900}
-      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-150}
-
-      # Hybrid Search
-      - SEMANTIC_WEIGHT=${SEMANTIC_WEIGHT:-0.7}
-      - BM25_WEIGHT=${BM25_WEIGHT:-0.3}
-
-      # Reranking
-      - RERANK_ENABLED=${RERANK_ENABLED:-true}
-      - RERANK_MODEL=${RERANK_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
-      - RERANK_USE_MMR=${RERANK_USE_MMR:-true}
-      - MMR_LAMBDA=${MMR_LAMBDA:-0.5}
 
       # Embeddings
       - EMBED_MODEL=${EMBED_MODEL:-intfloat/multilingual-e5-large}
+      - EMBEDDING_BATCH_SIZE=32
+      - EMBEDDING_ENABLE_GPU=false
 
-      # Semantic Chunking
-      - USE_SEMANTIC_CHUNKING=${USE_SEMANTIC_CHUNKING:-true}
-      - SEMANTIC_SIMILARITY_THRESHOLD=${SEMANTIC_SIMILARITY_THRESHOLD:-0.7}
+      # Semantic Cache (NEW)
+      - SEMANTIC_CACHE_ENABLED=true
+      - SEMANTIC_CACHE_SIMILARITY_THRESHOLD=0.85
+      - CACHE_WARMING_ENABLED=true
 
-      # Query Expansion
-      - QUERY_EXPANSION_ENABLED=${QUERY_EXPANSION_ENABLED:-true}
-      - QUERY_EXPANSION_METHOD=${QUERY_EXPANSION_METHOD:-acronym}
+      # Features (NEW)
+      - CONVERSATION_ENABLED=true
+      - ALERTS_ENABLED=true
+      - COLLECTIONS_ENABLED=true
+      - EXPORT_ENABLED=true
 
       # Redis Cache
-      - CACHE_ENABLED=${CACHE_ENABLED:-true}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_DB=${REDIS_DB:-0}
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - CACHE_TTL=${CACHE_TTL:-3600}
+      - CACHE_TTL=3600
 
       # Monitoring
-      - METRICS_ENABLED=${METRICS_ENABLED:-true}
-      - PROMETHEUS_PORT=8001
+      - METRICS_ENABLED=true
 
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-      - LOG_FORMAT=${LOG_FORMAT:-console}  # Console format for dev
+      - LOG_FORMAT=console
+
+      # OpenTelemetry
+      - OTEL_TRACE_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=arxiv-futura-search
     volumes:
-      # Mount source code for live reload (if using --reload)
+      # Mount source for hot reload
       - ./app:/app/app:ro
       - ./templates:/app/templates:ro
-      # Persist data directory (ChromaDB, raw data, processed data)
-      - arxiv_dev_data:/app/data
-      # HuggingFace cache for models
-      - hf_cache_dev:/root/.cache/huggingface
+      # Persist data
+      - arxiv_data:/app/data
+      # Model cache
+      - hf_cache:/root/.cache/huggingface
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     networks:
-      - arxiv_dev_network
-    # Enable hot reload in development
+      - arxiv-network
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   # =========================================================================
-  # Redis - Caching Layer
+  # PostgreSQL Database (NEW - for auth, conversations, alerts)
+  # =========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: arxiv-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: arxiv_rag
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arxiv-network
+
+  # =========================================================================
+  # Redis Cache
   # =========================================================================
   redis:
     image: redis:7-alpine
@@ -108,45 +128,135 @@ services:
     restart: unless-stopped
     command: >
       redis-server
-      --maxmemory ${REDIS_MAX_MEMORY:-128mb}
+      --maxmemory 128mb
       --maxmemory-policy allkeys-lru
-      --save ""
-      --appendonly no
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "6379:6379"
     volumes:
-      - redis_dev_data:/data
-    networks:
-      - arxiv_dev_network
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - arxiv-network
+
+  # =========================================================================
+  # Adminer - Database GUI (NEW)
+  # =========================================================================
+  adminer:
+    image: adminer:latest
+    container_name: arxiv-adminer-dev
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+      - ADMINER_DESIGN=nette
+    networks:
+      - arxiv-network
+
+  # =========================================================================
+  # Redis Commander - Redis GUI (NEW)
+  # =========================================================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: arxiv-redis-commander-dev
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    networks:
+      - arxiv-network
+
+  # =========================================================================
+  # Prometheus - Metrics Collector (NEW)
+  # =========================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: arxiv-prometheus-dev
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - arxiv-network
+
+  # =========================================================================
+  # Grafana - Metrics Dashboard (NEW)
+  # =========================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: arxiv-grafana-dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=redis-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus:
+        condition: service_started
+    networks:
+      - arxiv-network
+
+  # =========================================================================
+  # Jaeger - Tracing UI (NEW)
+  # =========================================================================
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: arxiv-jaeger-dev
+    restart: unless-stopped
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - arxiv-network
+
+  # =========================================================================
+  # Ollama - Local LLM (OPTIONAL - uncomment to use)
+  # =========================================================================
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: arxiv-ollama-dev
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   networks:
+  #     - arxiv-network
 
 # =============================================================================
 # Networks
 # =============================================================================
 networks:
-  arxiv_dev_network:
-    name: arxiv_dev_network
+  arxiv-network:
+    name: arxiv_network
     driver: bridge
 
 # =============================================================================
 # Volumes
 # =============================================================================
 volumes:
-  # Application data (ChromaDB, downloaded papers, etc.)
-  arxiv_dev_data:
-    name: arxiv_dev_data
-    driver: local
-
-  # Redis persistence
-  redis_dev_data:
-    name: arxiv_redis_dev_data
-    driver: local
-
-  # HuggingFace model cache
-  hf_cache_dev:
-    name: arxiv_hf_cache_dev
-    driver: local
+  arxiv_data:
+  postgres_data:
+  redis_data:
+  hf_cache:
+  prometheus_data:
+  grafana_data:
+  # ollama_data:

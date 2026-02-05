@@ -236,7 +236,7 @@ def temp_chroma_db(tmp_path):
 
     client = chromadb.PersistentClient(
         path=str(db_dir),
-        settings=settings=Settings(anonymized_telemetry=False)
+        settings=Settings(anonymized_telemetry=False)
     )
 
     yield client

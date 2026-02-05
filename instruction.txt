@@ -1,5 +1,7 @@
 uv sync
 
+.venv\Scripts\activate
+
 uv run uvicorn app.main:app --port 8000 --reload
 
 ### first boot time takes 3 min--download e5 model

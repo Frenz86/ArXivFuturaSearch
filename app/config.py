@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = "postgres"
     POSTGRES_POOL_SIZE: int = 10
     POSTGRES_MAX_OVERFLOW: int = 20
+    POSTGRES_POOL_TIMEOUT: int = 30
+    POSTGRES_POOL_RECYCLE: int = 3600
 
     # Retrieval
     TOP_K: int = 5

@@ -226,7 +226,7 @@ async def health_check():
             },
             "cache": {
                 "status": "enabled" if get_cache().enabled else "disabled",
-                "type": "redis" if get_cache().redis_client else "memory",
+                "type": "redis" if get_cache()._client else "memory",
             },
             "llm": {
                 "status": "configured",

@@ -305,8 +305,8 @@ async def get_db_session() -> AsyncSession:
     return await database_container.get_session()
 
 
-async def get_embeddings() -> NativeEmbeddings:
-    """Get embeddings."""
+async def get_embeddings_async() -> NativeEmbeddings:
+    """Get embeddings (convenience async wrapper)."""
     return await embeddings_container.get()
 
 

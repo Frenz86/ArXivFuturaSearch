@@ -5,6 +5,7 @@ Run with: pytest tests/ -v
 
 import pytest
 import sys
+import asyncio
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock
 from typing import Generator

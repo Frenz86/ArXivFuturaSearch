@@ -167,15 +167,43 @@ This document summarizes the **complete implementation** of all improvements to 
 | Missing error handling | ✅ FIXED | `app/errors/handlers.py` with custom exceptions |
 | API not updated | ✅ FIXED | `app/main.py` includes all routers and middleware |
 
-### Quick Start for Production
+### Quick Start — Development (no database required)
+
+> ChromaDB is the default vector store and works out of the box locally.
+> PostgreSQL is only needed for production deployments.
+> First boot downloads the E5 embedding model (~1 GB) — takes a few minutes.
+
+```bash
+# 1. Install dependencies (requires uv)
+uv sync
+
+# 2. Activate the virtual environment
+.venv/Scripts/activate          # Windows
+source .venv/bin/activate       # Linux / macOS
+
+# 3. Start the application
+uvicorn app.main:app --reload --port 8000
+
+# 4. Open the API docs
+# http://localhost:8000/docs
+```
+
+Or in one shot with the setup script:
+
+```bash
+bash scripts/dev-setup.sh       # Linux / macOS
+scripts\dev-setup.bat           # Windows
+```
+
+### Quick Start — Production (PostgreSQL + pgvector)
 
 ```bash
 # 1. Install dependencies
 pip install -e .
 
 # 2. Setup environment variables
-cp .env.example .env
-# Edit .env with your settings
+cp .env.prod.example .env
+# Edit .env — change all default passwords and set SECRET_KEY
 
 # 3. Run database migrations
 alembic upgrade head
@@ -184,7 +212,7 @@ alembic upgrade head
 uvicorn app.main:app --reload
 
 # 5. Access API documentation
-open http://localhost:8000/api/docs
+open http://localhost:8000/docs
 ```
 
 **Total: ~80 files created, ~18,000+ lines of code, 40+ API endpoints**

@@ -418,6 +418,7 @@ class AlertMonitoringTask:
         self.categories = categories or ArXivFeedParser.CATEGORIES
         self.db_factory = db_factory
         self.parser = ArXivFeedParser(categories=categories)
+        self._db_warning_logged = False
 
     async def monitor_and_alert(self):
         """
@@ -440,26 +441,32 @@ class AlertMonitoringTask:
                     papers = await self.parser.fetch_papers(category)
                     all_papers.extend(papers)
 
-                if all_papers:
-                    # Get database session
-                    db = await self.db_factory()
+                if all_papers and self.db_factory:
                     try:
-                        manager = AlertManager(db)
+                        db = await self.db_factory()
+                        try:
+                            manager = AlertManager(db)
+                            matches = await manager.check_alerts(all_papers)
 
-                        # Check alerts against papers
-                        matches = await manager.check_alerts(all_papers)
-
-                        # Trigger notifications for matching alerts
-                        for alert_id, matching_papers in matches.items():
-                            result = await db.execute(
-                                select(Alert).where(Alert.id == alert_id)
+                            for alert_id, matching_papers in matches.items():
+                                result = await db.execute(
+                                    select(Alert).where(Alert.id == alert_id)
+                                )
+                                alert = result.scalar_one_or_none()
+                                if alert:
+                                    await manager.trigger_alert(alert, matching_papers)
+                        finally:
+                            await db.close()
+                        # Reset warning flag on successful DB access
+                        self._db_warning_logged = False
+                    except Exception as db_err:
+                        if not self._db_warning_logged:
+                            logger.warning(
+                                "Database unavailable, skipping alert check "
+                                "(alerts require PostgreSQL)",
+                                error=str(db_err),
                             )
-                            alert = result.scalar_one_or_none()
-
-                            if alert:
-                                await manager.trigger_alert(alert, matching_papers)
-                    finally:
-                        await db.close()
+                            self._db_warning_logged = True
 
                 # Wait until next check
                 await asyncio.sleep(self.check_interval.total_seconds())

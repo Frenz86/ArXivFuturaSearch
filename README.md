@@ -454,14 +454,13 @@ arxiv-rag-copilot/
 │   │
 │   # Core RAG Pipeline
 │   ├── arxiv_loader.py            # ArXiv API client
-│   ├── arxiv_document_loader.py   # LangChain document loader
 │   ├── chunking.py                # Text chunking (semantic/sentence-aware)
-│   ├── embeddings.py              # Embedding & reranking (thread-safe)
 │   ├── vectorstore.py             # Vector store factory
 │   ├── vectorstore_chroma.py      # ChromaDB implementation
 │   ├── vectorstore_pgvector.py    # Pgvector implementation
 │   ├── query_expansion.py         # Query expansion techniques
-│   ├── rag.py                     # RAG logic & LLM generation
+│   ├── embeddings/                # Embeddings package (native + reranker + MMR)
+│   ├── rag/                       # RAG package (native chain + LLM + prompts)
 │   │
 │   # Resilience & Reliability
 │   ├── circuit_breaker.py         # Circuit breaker pattern

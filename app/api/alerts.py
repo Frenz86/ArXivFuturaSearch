@@ -244,23 +244,45 @@ async def test_alert(
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
 
-    # Send test notification
     from app.alerts.notifications import NotificationService
 
     notification_service = NotificationService()
-
-    # Get notification config from alert
     config = alert.notification_config or {}
 
-    # Send test email/webhook
+    test_papers = [{
+        "title": "[Test] Sample Paper for Alert Verification",
+        "authors": ["Test Author"],
+        "summary": "This is an automated test notification triggered manually. No action required.",
+        "link": "https://arxiv.org/abs/0000.0000",
+    }]
+
+    errors = []
+
     if alert.notification_method in ("email", "both"):
-        # TODO: Implement actual email sending
-        pass
+        recipient = config.get("email") or (current_user.email if hasattr(current_user, "email") else "")
+        try:
+            await notification_service.send_email(
+                recipient=recipient,
+                subject=f"[Test] ArXiv Alert — {alert.name}",
+                papers=test_papers,
+                alert_name=alert.name,
+            )
+        except Exception as e:
+            errors.append(f"email: {e}")
 
     if alert.notification_method in ("webhook", "both"):
-        # TODO: Implement actual webhook sending
-        pass
+        webhook_url = config.get("webhook_url", "")
+        try:
+            await notification_service.send_webhook(
+                url=webhook_url,
+                papers=test_papers,
+                alert_name=alert.name,
+            )
+        except Exception as e:
+            errors.append(f"webhook: {e}")
 
+    if errors:
+        return {"message": "Test notification partially failed", "errors": errors}
     return {"message": "Test notification sent"}
 
 

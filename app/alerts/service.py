@@ -450,7 +450,7 @@ class AlertMonitoringTask:
 
                         # Trigger notifications for matching alerts
                         for alert_id, matching_papers in matches.items():
-                            result = await self.db.execute(
+                            result = await db.execute(
                                 select(Alert).where(Alert.id == alert_id)
                             )
                             alert = result.scalar_one_or_none()

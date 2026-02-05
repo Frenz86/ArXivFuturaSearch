@@ -134,51 +134,81 @@ class SecurityValidationMiddleware(BaseHTTPMiddleware):
 # =============================================================================
 
 class RateLimiter:
-    """Simple in-memory rate limiter using sliding window."""
+    """Redis-backed rate limiter with in-memory fallback.
+
+    Uses Redis INCR + EXPIRE for distributed, crash-safe rate limiting.
+    Falls back to a simple in-memory counter if Redis is unavailable.
+    """
 
     def __init__(self, requests_per_minute: int = 60):
-        """
-        Initialize rate limiter.
-
-        Args:
-            requests_per_minute: Maximum requests per minute per client
-        """
         self.requests_per_minute = requests_per_minute
-        self._requests: dict[str, list[float]] = {}
+        self._redis = None
+        self._redis_attempted = False
+        # In-memory fallback state
+        self._mem: dict[str, list[float]] = {}
+
+    def _get_redis(self):
+        """Lazy-init Redis client from the app cache singleton."""
+        if not self._redis_attempted:
+            self._redis_attempted = True
+            try:
+                from app.simple_cache import get_cache
+                cache = get_cache()
+                if cache.enabled:
+                    self._redis = cache._client
+                    logger.info("Rate limiter: using Redis backend")
+                else:
+                    logger.info("Rate limiter: Redis not available, using in-memory fallback")
+            except Exception as e:
+                logger.warning("Rate limiter: failed to connect to Redis", error=str(e))
+        return self._redis
 
     def is_allowed(self, client_id: str) -> tuple[bool, int]:
-        """
-        Check if request is allowed.
-
-        Args:
-            client_id: Unique identifier for the client (IP address)
+        """Check if the request is within the rate limit.
 
         Returns:
             Tuple of (allowed, retry_after_seconds)
         """
+        redis = self._get_redis()
+
+        if redis is not None:
+            return self._is_allowed_redis(client_id, redis)
+        return self._is_allowed_memory(client_id)
+
+    # ------------------------------------------------------------------
+    # Redis path
+    # ------------------------------------------------------------------
+    def _is_allowed_redis(self, client_id: str, redis) -> tuple[bool, int]:
+        key = f"ratelimit:{client_id}"
+        try:
+            current = redis.incr(key)
+            if current == 1:
+                redis.expire(key, 60)  # 1-minute window
+            if current > self.requests_per_minute:
+                ttl = redis.ttl(key)
+                return False, max(int(ttl), 1)
+            return True, 0
+        except Exception as e:
+            logger.warning("Rate limiter Redis error, allowing request", error=str(e))
+            return True, 0  # fail-open
+
+    # ------------------------------------------------------------------
+    # In-memory fallback path
+    # ------------------------------------------------------------------
+    def _is_allowed_memory(self, client_id: str) -> tuple[bool, int]:
         now = time.time()
-        window_start = now - 60  # 1 minute window
+        window_start = now - 60
 
-        # Get or init client request history
-        if client_id not in self._requests:
-            self._requests[client_id] = []
+        if client_id not in self._mem:
+            self._mem[client_id] = []
 
-        # Clean old requests outside the window
-        self._requests[client_id] = [
-            req_time for req_time in self._requests[client_id]
-            if req_time > window_start
-        ]
+        self._mem[client_id] = [t for t in self._mem[client_id] if t > window_start]
 
-        # Check limit
-        request_count = len(self._requests[client_id])
-        if request_count >= self.requests_per_minute:
-            # Calculate when the oldest request will expire
-            oldest_request = min(self._requests[client_id])
-            retry_after = int(oldest_request - window_start) + 1
-            return False, retry_after
+        if len(self._mem[client_id]) >= self.requests_per_minute:
+            oldest = min(self._mem[client_id])
+            return False, int(oldest - window_start) + 1
 
-        # Add current request
-        self._requests[client_id].append(now)
+        self._mem[client_id].append(now)
         return True, 0
 
 
@@ -306,11 +336,12 @@ def setup_cors_middleware(app) -> None:
     allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
 
     if not allowed_origins or allowed_origins == [""]:
-        # Default to localhost for development
+        # Default to localhost for development, respecting APP_PORT
+        port = settings.APP_PORT
         allowed_origins = [
-            "http://localhost:8000",
+            f"http://localhost:{port}",
             "http://localhost:3000",
-            "http://127.0.0.1:8000",
+            f"http://127.0.0.1:{port}",
             "http://127.0.0.1:3000",
         ]
 

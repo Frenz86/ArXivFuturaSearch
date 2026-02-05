@@ -14,6 +14,9 @@ from app.rag.llm import (
     check_llm_health,
     check_openrouter_health,
 )
+
+# Alias used by advanced_search.py
+get_chat_model = get_llm
 from app.rag.rag_chain import (
     create_rag_chain,
     list_openrouter_models,
@@ -27,6 +30,7 @@ __all__ = [
     "build_prompt",
     # LLM
     "get_llm",
+    "get_chat_model",
     "llm_generate_async",
     "llm_generate_stream",
     "llm_generate",

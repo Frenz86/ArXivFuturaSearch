@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import secrets as _secrets
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # Single source of truth for version
 __version__ = "0.4.0"
+
+_SECRET_KEY_DEFAULT = "changeme-secret-key"
 
 
 class Settings(BaseSettings):
@@ -27,6 +32,10 @@ class Settings(BaseSettings):
 
     # Environment
     ENVIRONMENT: str = "development"  # "development" or "production"
+
+    # Application ports
+    APP_PORT: int = 8000
+    METRICS_PORT: int = 8001
 
     # Vector Store Configuration
     # Options: "chroma" (local, dev) or "pgvector" (PostgreSQL, production)
@@ -94,7 +103,6 @@ class Settings(BaseSettings):
 
     # Monitoring
     METRICS_ENABLED: bool = True
-    PROMETHEUS_PORT: int = 8001
 
     # LLM mode: "openrouter", "ollama", or "mock"
     LLM_MODE: str = "openrouter"
@@ -123,9 +131,9 @@ class Settings(BaseSettings):
     OTEL_METRICS_EXPORTER: str = "console"  # "console", "otlp", "none"
 
     # =============================================================================
-    # SECURITY SETTINGS (from config_extensions.py)
+    # SECURITY SETTINGS
     # =============================================================================
-    SECRET_KEY: str = "changeme-secret-key"
+    SECRET_KEY: str = _SECRET_KEY_DEFAULT
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
@@ -139,17 +147,24 @@ class Settings(BaseSettings):
     # OAuth Settings
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/oauth/google/callback"
+    GOOGLE_REDIRECT_URI: str = ""  # Auto-set by validator if empty
 
     GITHUB_CLIENT_ID: str = ""
     GITHUB_CLIENT_SECRET: str = ""
-    GITHUB_REDIRECT_URI: str = "http://localhost:8000/api/auth/oauth/github/callback"
+    GITHUB_REDIRECT_URI: str = ""  # Auto-set by validator if empty
 
     # Audit Settings
     AUDIT_LOG_RETENTION_DAYS: int = 90
 
+    # SMTP Email (for alert notifications)
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 587
+    SMTP_USER: str | None = None
+    SMTP_PASSWORD: str | None = None
+    EMAIL_FROM: str = "noreply@arxivfuturasearch.com"
+
     # =============================================================================
-    # PERFORMANCE SETTINGS (from config_extensions.py)
+    # PERFORMANCE SETTINGS
     # =============================================================================
     # Batch Processing
     BATCH_PROCESSING_STRATEGY: str = "thread_parallel"  # sequential, thread_parallel, process_parallel, gpu_batched
@@ -180,7 +195,7 @@ class Settings(BaseSettings):
     CACHE_WARMING_CONCURRENCY: int = 5
 
     # =============================================================================
-    # FEATURE SETTINGS (from config_extensions.py)
+    # FEATURE SETTINGS
     # =============================================================================
     # Conversation Memory
     CONVERSATION_ENABLED: bool = True
@@ -202,11 +217,32 @@ class Settings(BaseSettings):
     EXPORT_MAX_SIZE_MB: int = 50
 
     # =============================================================================
-    # DATABASE SETTINGS (from config_extensions.py)
+    # DATABASE SETTINGS
     # =============================================================================
     # PostgreSQL (for auth, conversations, etc.)
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/arxiv_rag"
     DATABASE_ECHO: bool = False
+
+    @model_validator(mode="after")
+    def validate_secrets_and_ports(self):
+        # --- SECRET_KEY ---
+        if self.SECRET_KEY == _SECRET_KEY_DEFAULT:
+            if self.ENVIRONMENT == "production":
+                raise ValueError(
+                    "SECRET_KEY must be set to a secure value in production. "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+                )
+            # Development: auto-generate and warn at runtime
+            self.SECRET_KEY = _secrets.token_urlsafe(64)
+
+        # --- OAuth redirect URIs (auto-fill from APP_PORT if empty) ---
+        base = f"http://localhost:{self.APP_PORT}"
+        if not self.GOOGLE_REDIRECT_URI:
+            self.GOOGLE_REDIRECT_URI = f"{base}/api/auth/oauth/google/callback"
+        if not self.GITHUB_REDIRECT_URI:
+            self.GITHUB_REDIRECT_URI = f"{base}/api/auth/oauth/github/callback"
+
+        return self
 
 
 settings = Settings()

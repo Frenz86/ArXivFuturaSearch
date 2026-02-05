@@ -446,7 +446,7 @@ def init_metrics():
     logger.info(
         "Metrics initialized",
         enabled=settings.METRICS_ENABLED,
-        port=settings.PROMETHEUS_PORT,
+        port=settings.METRICS_PORT,
     )
 
 

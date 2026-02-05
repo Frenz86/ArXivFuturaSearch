@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-arxiv_rag}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env — never use a default in production}
       POSTGRES_DB: ${POSTGRES_DB:-arxiv_rag}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
@@ -62,7 +62,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-arxiv_rag}
       - POSTGRES_USER=${POSTGRES_USER:-arxiv_rag}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       - POSTGRES_POOL_SIZE=${POSTGRES_POOL_SIZE:-10}
       - POSTGRES_MAX_OVERFLOW=${POSTGRES_MAX_OVERFLOW:-20}
 
@@ -112,7 +112,7 @@ services:
 
       # Monitoring
       - METRICS_ENABLED=${METRICS_ENABLED:-true}
-      - PROMETHEUS_PORT=8001
+      - METRICS_PORT=${METRICS_PORT:-8001}
 
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

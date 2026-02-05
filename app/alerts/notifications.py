@@ -4,10 +4,16 @@ Notification service for sending alerts via email and webhook.
 Sends notifications when ArXiv papers match user alert criteria.
 """
 
+import asyncio
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import List, Dict, Any
 from datetime import datetime
+
 import httpx
 
+from app.config import settings
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -28,7 +34,10 @@ class NotificationService:
         alert_name: str,
     ):
         """
-        Send email notification.
+        Send email notification via SMTP.
+
+        Requires SMTP_HOST to be configured in settings.
+        Uses STARTTLS and optional auth (SMTP_USER / SMTP_PASSWORD).
 
         Args:
             recipient: Email address
@@ -36,34 +45,39 @@ class NotificationService:
             papers: List of matching papers
             alert_name: Alert name
         """
-        # Placeholder for email sending
-        # Would use sendgrid, SMTP, or other email service
+        if not settings.SMTP_HOST:
+            raise ValueError(
+                "SMTP_HOST is not configured. "
+                "Set SMTP_HOST (and optionally SMTP_PORT, SMTP_USER, SMTP_PASSWORD) "
+                "in your .env to enable email notifications."
+            )
+        if not recipient:
+            raise ValueError("Recipient email address is empty")
 
-        # Build email content
         email_body = self._build_email_body(alert_name, papers)
 
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = settings.EMAIL_FROM
+        msg["To"] = recipient
+        msg.attach(MIMEText(email_body, "html"))
+
+        def _send_sync():
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+                server.ehlo()
+                server.starttls()
+                if settings.SMTP_USER and settings.SMTP_PASSWORD:
+                    server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                server.sendmail(settings.EMAIL_FROM, [recipient], msg.as_string())
+
+        await asyncio.to_thread(_send_sync)
+
         logger.info(
-            "Email notification would be sent",
+            "Email notification sent",
             recipient=recipient,
             subject=subject,
             paper_count=len(papers),
         )
-
-        # Implementation would depend on email service used
-        # Example with sendgrid:
-        # import os
-        # from sendgrid import SendGridAPIClient
-        # from sendgrid.helpers import Mail
-        #
-        # message = Mail(
-        #     from_email="noreply@arxivfuturasearch.com",
-        #     to_emails=[recipient],
-        #     subject=subject,
-        #     html_content=email_body,
-        # )
-        #
-        # sg = SendGridAPIClient(api_key=os.getenv("SENDGRID_API_KEY"))
-        # response = sg.send(message)
 
     async def send_webhook(
         self,

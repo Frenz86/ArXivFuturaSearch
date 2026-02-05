@@ -20,8 +20,8 @@ from app.alerts.service import AlertManager
 from app.collections.manager import CollectionManager
 from app.embeddings.native import get_embeddings, NativeEmbeddings
 from app.llm.native import LLMFactory, NativeLLM
-from app.rag.native import create_rag_pipeline, RAGPipeline
-# from app.cache.semantic import SemanticCache  # TODO: Fix module naming conflict
+from app.rag.native import create_rag_pipeline, RAGPipeline, Retriever, RetrievalMethod, RetrievedDocument, VectorStore
+from app.cache.semantic import SemanticCache
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -130,28 +130,65 @@ class LLMContainer:
 # CACHE
 # =============================================================================
 
-# TODO: Fix module naming conflict between app/cache.py and app/cache/
-# class CacheContainer:
-#     """Cache management."""
-#
-#     def __init__(self):
-#         self._semantic_cache: Optional[SemanticCache] = None
-#
-#     async def get_semantic_cache(self) -> Optional[SemanticCache]:
-#         """Get or create semantic cache."""
-#         if not settings.SEMANTIC_CACHE_ENABLED:
-#             return None
-#
-#         if self._semantic_cache is None:
-#             embeddings = await embeddings_container.get()
-#             self._semantic_cache = SemanticCache(
-#                 embeddings=embeddings,
-#                 similarity_threshold=settings.SEMANTIC_CACHE_SIMILARITY_THRESHOLD,
-#                 max_entries=settings.SEMANTIC_CACHE_MAX_ENTRIES,
-#             )
-#             logger.info("Semantic cache initialized")
-#
-#         return self._semantic_cache
+class CacheContainer:
+    """Cache management."""
+
+    def __init__(self):
+        self._semantic_cache: Optional[SemanticCache] = None
+
+    async def get_semantic_cache(self) -> Optional[SemanticCache]:
+        """Get or create semantic cache."""
+        if not settings.SEMANTIC_CACHE_ENABLED:
+            return None
+
+        if self._semantic_cache is None:
+            self._semantic_cache = SemanticCache(
+                similarity_threshold=settings.SEMANTIC_CACHE_SIMILARITY_THRESHOLD,
+                max_entries=settings.SEMANTIC_CACHE_MAX_ENTRIES,
+            )
+            logger.info("Semantic cache initialized")
+
+        return self._semantic_cache
+
+
+# ---------------------------------------------------------------------------
+# Adapter: wraps VectorStoreInterface (used by main.py / deps) into the
+# VectorStore protocol expected by rag.native.Retriever
+# ---------------------------------------------------------------------------
+class VectorStoreAdapter(VectorStore):
+    """Adapts app.vectorstore.VectorStoreInterface → rag.native.VectorStore."""
+
+    def __init__(self, store, embeddings: NativeEmbeddings):
+        self._store = store
+        self._embeddings = embeddings
+
+    async def add_texts(self, texts, metadatas=None, ids=None):
+        import numpy as np
+        vectors = np.array([self._embeddings.embed_query(t) for t in texts])
+        chunk_ids = ids or [str(i) for i in range(len(texts))]
+        metas = metadatas or [{} for _ in texts]
+        self._store.add(vectors=vectors, chunk_ids=chunk_ids, texts=texts, metas=metas)
+        return chunk_ids
+
+    async def similarity_search(self, query, k=10, score_threshold=None, filter_dict=None):
+        import numpy as np
+        query_vec = np.array(self._embeddings.embed_query(query))
+        raw = self._store.search(query_vec=query_vec, query_text=query, top_k=k)
+        docs = []
+        for r in raw:
+            score = r.get("score", 0.0)
+            if score_threshold is not None and score < score_threshold:
+                continue
+            docs.append(RetrievedDocument(
+                id=r.get("chunk_id", r.get("id", "")),
+                content=r.get("text", r.get("content", "")),
+                metadata=r.get("metadata", {}),
+                score=score,
+            ))
+        return docs
+
+    async def delete(self, ids):
+        pass  # Not exposed by VectorStoreInterface; no-op
 
 
 # =============================================================================
@@ -222,26 +259,22 @@ class RAGContainer:
     async def get(self, db: AsyncSession) -> RAGPipeline:
         """Get or create RAG pipeline."""
         if self._pipeline is None:
-            # This is a simplified version - in production, integrate with
-            # actual vector store and BM25 retriever
-            from app.rag.native import Retriever, RetrievalMethod
+            from app import dependencies as deps
 
-            # For now, create a basic retriever
-            # TODO: Integrate with actual vector store
             embeddings = await embeddings_container.get()
 
-            # Create BM25 retriever if papers exist
-            from app.retrieval.bm25 import create_bm25_retriever
-
-            # Mock documents for now - replace with actual paper retrieval
-            mock_docs = []
-            bm25_retriever = create_bm25_retriever(mock_docs) if mock_docs else None
+            # Wire vector store from the global instance set by main.py lifespan
+            vector_store = None
+            if deps._store_instance is not None:
+                vector_store = VectorStoreAdapter(deps._store_instance, embeddings)
+            else:
+                logger.warning("Vector store not yet initialized — RAG semantic search will be unavailable until index is built")
 
             retriever = Retriever(
-                vector_store=None,  # TODO: Add vector store
-                bm25_retriever=bm25_retriever,
+                vector_store=vector_store,
+                bm25_retriever=None,
                 embeddings=embeddings,
-                default_method=RetrievalMethod.SEMANTIC,
+                default_method=RetrievalMethod.HYBRID if vector_store else RetrievalMethod.KEYWORD,
             )
 
             llm = await llm_container.get()
@@ -251,7 +284,7 @@ class RAGContainer:
                 llm=llm,
                 max_context_length=settings.MAX_CONTEXT_TOKENS,
             )
-            logger.info("RAG pipeline initialized")
+            logger.info("RAG pipeline initialized", has_vector_store=vector_store is not None)
 
         return self._pipeline
 
@@ -264,7 +297,7 @@ class RAGContainer:
 database_container = DatabaseContainer()
 embeddings_container = EmbeddingsContainer()
 llm_container = LLMContainer()
-# cache_container = CacheContainer()  # TODO: Fix module naming conflict
+cache_container = CacheContainer()
 service_container = ServiceContainer()
 rag_container = RAGContainer()
 

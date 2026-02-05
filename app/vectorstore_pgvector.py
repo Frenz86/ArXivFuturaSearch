@@ -453,32 +453,6 @@ class PgvectorStore:
 
         return rrf_results
 
-    def get_langchain_retriever(
-        self,
-        search_type: str = "mmr",
-        search_kwargs: Optional[dict] = None,
-    ):
-        """
-        Get a LangChain retriever for use in chains.
-
-        Args:
-            search_type: Type of search ("similarity", "mmr", "similarity_score_threshold")
-            search_kwargs: Additional search parameters
-
-        Returns:
-            LangChain retriever object
-        """
-        if search_kwargs is None:
-            search_kwargs = {"k": settings.TOP_K, "fetch_k": settings.RETRIEVAL_K}
-
-        if search_type == "mmr":
-            search_kwargs.setdefault("lambda_mult", settings.MMR_LAMBDA)
-
-        return self.vectorstore.as_retriever(
-            search_type=search_type,
-            search_kwargs=search_kwargs,
-        )
-
     def get_ensemble_retriever(
         self,
         top_k: int = 5,

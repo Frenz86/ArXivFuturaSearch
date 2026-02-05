@@ -20,7 +20,7 @@ This module provides a unified interface for different vector store backends:
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Any
+from typing import Optional
 import numpy as np
 
 from app.config import settings
@@ -65,15 +65,6 @@ class VectorStoreInterface(ABC):
         filters: Optional[dict] = None,
     ) -> list[dict]:
         """Advanced ensemble search with query expansion and RRF."""
-        pass
-
-    @abstractmethod
-    def get_langchain_retriever(
-        self,
-        search_type: str = "mmr",
-        search_kwargs: Optional[dict] = None,
-    ) -> Any:
-        """Get a LangChain retriever for use in chains."""
         pass
 
     @abstractmethod

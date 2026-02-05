@@ -1,4 +1,4 @@
-"""FastAPI server for ArXiv Futura Search v0.4.0 with LangChain, ChromaDB, caching, and metrics."""
+"""FastAPI server for ArXiv Futura Search v0.4.0 — ChromaDB, native RAG, caching, and metrics."""
 ## https://github.com/Frenz86/ArXivFuturaSearch
 
 # Copyright 2025 ArXivFuturaSearch Contributors
@@ -14,11 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -32,18 +33,14 @@ from app.logging_config import get_logger
 
 # Import route modules
 from app.api import web, search, advanced_search, monitoring, evaluation
-
-# NEW: Import additional route modules
 from app.api import auth, audit, conversations, export, alerts, collections
 
-# NEW: Import middleware
+# Import middleware
 from app.auth.middleware import AuthMiddleware
 from app.audit.middleware import AuditMiddleware
-
-# NEW: Import error handlers
 from app.errors.handlers import setup_error_handlers
 
-# NEW: Import DI container
+# Import DI container
 from app.container import (
     init_containers,
     close_containers,
@@ -64,10 +61,10 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Starting ArXiv Futura Search",
         version=settings.VERSION,
-        mode="LangChain + ChromaDB + Native Components"
+        mode="ChromaDB + Native RAG"
     )
 
-    # NEW: Initialize dependency injection containers
+    # Initialize dependency injection containers
     try:
         await init_containers()
         logger.info("Dependency injection containers initialized")
@@ -94,7 +91,7 @@ async def lifespan(app: FastAPI):
         logger.info("Pre-loading reranker model...", model=settings.RERANK_MODEL)
         get_reranker()
 
-    # NEW: Warm up semantic cache if enabled
+    # Warm up semantic cache if enabled
     if settings.SEMANTIC_CACHE_ENABLED and settings.CACHE_WARMING_ENABLED:
         try:
             from app.cache.warming import warm_up_cache_on_startup
@@ -139,11 +136,35 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Vector store initialization failed", error=str(e))
 
+    # Start alert monitoring background task
+    _alert_task = None
+    if settings.ALERTS_ENABLED:
+        try:
+            from app.alerts.service import AlertMonitoringTask
+
+            alert_monitor = AlertMonitoringTask(
+                check_interval_minutes=settings.ALERT_CHECK_INTERVAL_MINUTES,
+                db_factory=database_container.get_session,
+            )
+            _alert_task = asyncio.create_task(alert_monitor.monitor_and_alert())
+            logger.info("Alert monitoring task started", interval_minutes=settings.ALERT_CHECK_INTERVAL_MINUTES)
+        except Exception as e:
+            logger.warning("Alert monitoring task failed to start", error=str(e))
+
     yield
 
     logger.info("Shutting down ArXiv Futura Search")
 
-    # NEW: Close dependency injection containers
+    # Cancel alert monitoring task
+    if _alert_task and not _alert_task.done():
+        _alert_task.cancel()
+        try:
+            await _alert_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Alert monitoring task stopped")
+
+    # Close dependency injection containers
     try:
         await close_containers()
         logger.info("Dependency injection containers closed")
@@ -182,7 +203,6 @@ Most endpoints are publicly accessible. Some features require authentication:
 """,
     version=settings.VERSION,
     lifespan=lifespan,
-    # NEW: OpenAPI configuration for auth
     openapi_tags=[
         {"name": "Web Interface", "description": "Web UI endpoints"},
         {"name": "Search", "description": "Search and query papers"},
@@ -198,7 +218,6 @@ Most endpoints are publicly accessible. Some features require authentication:
     ],
 )
 
-# NEW: Setup error handlers
 setup_error_handlers(app)
 
 
@@ -260,14 +279,14 @@ async def favicon():
 setup_cors_middleware(app)
 setup_middleware(app)
 
-# NEW: Add authentication middleware (optional - doesn't require auth by default)
+# Authentication middleware (optional — doesn't require auth by default)
 app.add_middleware(
     AuthMiddleware,
     require_auth=False,  # Set to True to require auth for all endpoints
     excluded_paths=["/health", "/api/docs", "/api/openapi.json", "/static/", "/favicon.ico"],
 )
 
-# NEW: Add audit logging middleware
+# Audit logging middleware
 app.add_middleware(
     AuditMiddleware,
     excluded_paths=["/health", "/metrics", "/static/", "/favicon.ico"],
@@ -298,7 +317,6 @@ app.include_router(advanced_search.router, tags=["Advanced Search"])
 app.include_router(monitoring.router, tags=["Monitoring"])
 app.include_router(evaluation.router, tags=["Evaluation"])
 
-# NEW: Additional feature routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["Conversations"])
 app.include_router(export.router, prefix="/api/export", tags=["Export"])

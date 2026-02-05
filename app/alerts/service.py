@@ -89,7 +89,7 @@ class ArXivFeedParser:
         client = await self._get_client()
 
         # ArXiv RSS URL
-        rss_url = f"http://export.arxiv.org/api/query?id_cat={category}&max_results={self.max_results}"
+        rss_url = f"https://export.arxiv.org/api/query?search_query=cat:{category}&sortBy=submittedDate&sortOrder=descending&max_results={self.max_results}"
 
         try:
             response = await client.get(rss_url)
@@ -442,7 +442,8 @@ class AlertMonitoringTask:
 
                 if all_papers:
                     # Get database session
-                    async with self.db_factory() as db:
+                    db = await self.db_factory()
+                    try:
                         manager = AlertManager(db)
 
                         # Check alerts against papers
@@ -457,6 +458,8 @@ class AlertMonitoringTask:
 
                             if alert:
                                 await manager.trigger_alert(alert, matching_papers)
+                    finally:
+                        await db.close()
 
                 # Wait until next check
                 await asyncio.sleep(self.check_interval.total_seconds())

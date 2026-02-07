@@ -6,7 +6,7 @@ and conversation summarization.
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
@@ -139,7 +139,7 @@ class ConversationManager:
         )
         conversation = await self.get_conversation(conversation_id)
         if conversation:
-            conversation.updated_at = datetime.utcnow()
+            conversation.updated_at = datetime.now(UTC)
 
             # Auto-generate title from first user message
             if not conversation.title or conversation.title == "New Conversation":

@@ -22,10 +22,6 @@ import asyncio
 from typing import List, Optional, Dict, Any, Set
 from collections import defaultdict
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.language_models import BaseChatModel
-
 from app.logging_config import get_logger
 from app.config import settings
 
@@ -36,28 +32,34 @@ logger = get_logger(__name__)
 # QUERY GENERATION PROMPTS
 # =============================================================================
 
-QUERY_EXPANSION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """You are an expert at analyzing user questions and generating alternative search queries.
+QUERY_EXPANSION_SYSTEM = """You are an expert at analyzing user questions and generating alternative search queries.
 Your task is to generate 3-4 different variations of the user's question that:
 1. Rephrase the question using different wording
 2. Break down complex questions into simpler sub-questions
 3. Include relevant domain-specific terminology
 4. Consider different perspectives or interpretations
 
-Output only the alternative queries, one per line, without numbering or bullets."""),
-    ("user", "Original question: {question}\n\nGenerate 3-4 alternative search queries:")
-])
+Output only the alternative queries, one per line, without numbering or bullets."""
 
-QUERY_TRANSLATION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """You are an expert at translating queries between languages and domains.
+QUERY_EXPANSION_USER = "Original question: {question}\n\nGenerate 3-4 alternative search queries:"
+
+QUERY_TRANSLATION_SYSTEM = """You are an expert at translating queries between languages and domains.
 Given a user question, generate:
 1. An English translation (if not in English)
 2. A more technical/academic version
 3. A more general/simplified version
 
-Output only the translations, one per line, without numbering or bullets."""),
-    ("user", "Question: {question}\n\nGenerate translations:")
-])
+Output only the translations, one per line, without numbering or bullets."""
+
+QUERY_TRANSLATION_USER = "Question: {question}\n\nGenerate translations:"
+
+DECOMPOSE_SYSTEM = """You are an expert at breaking down complex questions into simpler sub-questions.
+Given a user question, decompose it into 2-4 simpler questions that, when answered together,
+would provide a complete answer to the original question.
+
+Output only the sub-questions, one per line, without numbering or bullets."""
+
+DECOMPOSE_USER = "Question: {question}\n\nDecompose into sub-questions:"
 
 
 # =============================================================================
@@ -76,7 +78,7 @@ class MultiQueryRetriever:
 
     def __init__(
         self,
-        llm: BaseChatModel,
+        llm: Any,
         num_queries: int = 4,
         merge_strategy: str = "rrf",
     ):
@@ -84,17 +86,13 @@ class MultiQueryRetriever:
         Initialize multi-query retriever.
 
         Args:
-            llm: Language model for query generation
+            llm: Language model with ainvoke(prompt) -> str
             num_queries: Number of query variants to generate
             merge_strategy: How to merge results ("rrf", "weighted", "union")
         """
         self.llm = llm
         self.num_queries = num_queries
         self.merge_strategy = merge_strategy
-
-        # Create query generation chain
-        self.query_chain = QUERY_EXPANSION_PROMPT | llm | StrOutputParser()
-        self.translation_chain = QUERY_TRANSLATION_PROMPT | llm | StrOutputParser()
 
     async def generate_queries(
         self,
@@ -112,8 +110,9 @@ class MultiQueryRetriever:
             List of query variants
         """
         try:
-            # Generate query variants
-            response = await self.query_chain.ainvoke({"question": question})
+            # Build prompt and call LLM directly
+            prompt = f"{QUERY_EXPANSION_SYSTEM}\n\n{QUERY_EXPANSION_USER.format(question=question)}"
+            response = await self.llm.ainvoke(prompt)
 
             # Parse response into individual queries
             variants = [
@@ -209,23 +208,12 @@ class MultiQueryRetriever:
         top_k: int,
         k: int = 60,
     ) -> List[Dict[str, Any]]:
-        """
-        Merge results using Reciprocal Rank Fusion (RRF).
-
-        Args:
-            result_sets: List of result lists from different queries
-            top_k: Number of final results
-            k: RRF constant
-
-        Returns:
-            Merged and ranked results
-        """
+        """Merge results using Reciprocal Rank Fusion (RRF)."""
         rrf_scores = defaultdict(float)
         result_map = {}
 
         for results in result_sets:
             for rank, result in enumerate(results, start=1):
-                # Create document ID from content hash
                 doc_id = self._get_doc_id(result)
                 rrf_scores[doc_id] += 1 / (k + rank)
 
@@ -234,14 +222,12 @@ class MultiQueryRetriever:
                     result_map[doc_id]["query_variants"] = []
                 result_map[doc_id]["query_variants"].append(rank)
 
-        # Sort by RRF score
         sorted_results = sorted(
             rrf_scores.items(),
             key=lambda x: x[1],
             reverse=True,
         )[:top_k]
 
-        # Format results
         merged = []
         for doc_id, score in sorted_results:
             result = result_map[doc_id]
@@ -257,17 +243,7 @@ class MultiQueryRetriever:
         result_sets: List[List[Dict[str, Any]]],
         top_k: int,
     ) -> List[Dict[str, Any]]:
-        """
-        Merge results with weighted scoring (original query gets highest weight).
-
-        Args:
-            result_sets: List of result lists
-            top_k: Number of final results
-
-        Returns:
-            Merged results
-        """
-        # Original query (first set) gets weight 1.0, others get 0.5
+        """Merge results with weighted scoring (original query gets highest weight)."""
         weights = [1.0] + [0.5] * (len(result_sets) - 1)
 
         combined_scores = defaultdict(float)
@@ -276,15 +252,12 @@ class MultiQueryRetriever:
         for results, weight in zip(result_sets, weights):
             for rank, result in enumerate(results):
                 doc_id = self._get_doc_id(result)
-
-                # Get normalized score (assuming results are sorted)
                 normalized_score = (1.0 / (rank + 1)) * weight
                 combined_scores[doc_id] += normalized_score
 
                 if doc_id not in result_map:
                     result_map[doc_id] = result.copy()
 
-        # Sort by combined score
         sorted_results = sorted(
             combined_scores.items(),
             key=lambda x: x[1],
@@ -301,16 +274,7 @@ class MultiQueryRetriever:
         result_sets: List[List[Dict[str, Any]]],
         top_k: int,
     ) -> List[Dict[str, Any]]:
-        """
-        Simple union merge - deduplicate but don't re-rank.
-
-        Args:
-            result_sets: List of result lists
-            top_k: Number of final results
-
-        Returns:
-            Deduplicated results
-        """
+        """Simple union merge - deduplicate but don't re-rank."""
         seen_ids: Set[str] = set()
         unique_results = []
 
@@ -330,16 +294,7 @@ class MultiQueryRetriever:
         return unique_results[:top_k]
 
     def _get_doc_id(self, result: Dict[str, Any]) -> str:
-        """
-        Generate a stable document ID from a result.
-
-        Args:
-            result: Search result
-
-        Returns:
-            Document ID string
-        """
-        # Try to get existing ID
+        """Generate a stable document ID from a result."""
         if "chunk_id" in result:
             return result["chunk_id"]
         if "doc_id" in result:
@@ -347,7 +302,6 @@ class MultiQueryRetriever:
         if "id" in result:
             return str(result["id"])
 
-        # Fallback to hash of text content
         text = result.get("text", result.get("content", ""))
         return str(hash(text))
 
@@ -363,25 +317,14 @@ class QueryDecomposer:
     Useful for multi-part questions that require different retrieval strategies.
     """
 
-    def __init__(self, llm: BaseChatModel):
+    def __init__(self, llm: Any):
         """
         Initialize query decomposer.
 
         Args:
-            llm: Language model for decomposition
+            llm: Language model with ainvoke(prompt) -> str
         """
         self.llm = llm
-
-        self.decompose_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert at breaking down complex questions into simpler sub-questions.
-Given a user question, decompose it into 2-4 simpler questions that, when answered together,
-would provide a complete answer to the original question.
-
-Output only the sub-questions, one per line, without numbering or bullets."""),
-            ("user", "Question: {question}\n\nDecompose into sub-questions:")
-        ])
-
-        self.decompose_chain = self.decompose_prompt | llm | StrOutputParser()
 
     async def decompose(self, question: str) -> List[str]:
         """
@@ -394,13 +337,14 @@ Output only the sub-questions, one per line, without numbering or bullets."""),
             List of simpler sub-questions
         """
         try:
-            response = await self.decompose_chain.ainvoke({"question": question})
+            prompt = f"{DECOMPOSE_SYSTEM}\n\n{DECOMPOSE_USER.format(question=question)}"
+            response = await self.llm.ainvoke(prompt)
 
             sub_questions = [
                 line.strip()
                 for line in response.strip().split('\n')
                 if line.strip() and len(line.strip()) > 5
-            ][:4]  # Limit to 4 sub-questions
+            ][:4]
 
             logger.info(
                 "Decomposed question",
@@ -433,10 +377,8 @@ Output only the sub-questions, one per line, without numbering or bullets."""),
         Returns:
             Combined answer with sources
         """
-        # Decompose question
         sub_questions = await self.decompose(question)
 
-        # Retrieve for each sub-question
         retrieval_tasks = [
             retriever_func(q, k=top_k)
             for q in sub_questions
@@ -444,7 +386,6 @@ Output only the sub-questions, one per line, without numbering or bullets."""),
 
         results = await asyncio.gather(*retrieval_tasks, return_exceptions=True)
 
-        # Generate answers for each sub-question
         answer_tasks = [
             answer_func(q, r if not isinstance(r, Exception) else [])
             for q, r in zip(sub_questions, results)
@@ -452,7 +393,6 @@ Output only the sub-questions, one per line, without numbering or bullets."""),
 
         answers = await asyncio.gather(*answer_tasks, return_exceptions=True)
 
-        # Format response
         sub_answers = []
         all_sources = []
 
@@ -481,7 +421,7 @@ _multi_query_retriever: Optional[MultiQueryRetriever] = None
 _query_decomposer: Optional[QueryDecomposer] = None
 
 
-def get_multi_query_retriever(llm: BaseChatModel) -> MultiQueryRetriever:
+def get_multi_query_retriever(llm: Any) -> MultiQueryRetriever:
     """Get or create global multi-query retriever."""
     global _multi_query_retriever
     if _multi_query_retriever is None:
@@ -489,7 +429,7 @@ def get_multi_query_retriever(llm: BaseChatModel) -> MultiQueryRetriever:
     return _multi_query_retriever
 
 
-def get_query_decomposer(llm: BaseChatModel) -> QueryDecomposer:
+def get_query_decomposer(llm: Any) -> QueryDecomposer:
     """Get or create global query decomposer."""
     global _query_decomposer
     if _query_decomposer is None:

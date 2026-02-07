@@ -1,8 +1,7 @@
 """
 Native embeddings implementation using sentence-transformers directly.
 
-This module provides a drop-in replacement for LangChain's embedding classes,
-reducing external dependencies while maintaining the same interface.
+Provides high-quality text embeddings with minimal dependencies.
 """
 
 from typing import List, Optional, Union, Dict, Any
@@ -40,8 +39,8 @@ class NativeEmbeddings:
     """
     Native sentence-transformers embeddings.
 
-    Direct replacement for LangChain's SentenceTransformerEmbeddings,
-    providing better performance and control.
+    Provides efficient text embedding generation with support for
+    multiple models and devices (CPU/GPU).
     """
 
     def __init__(
@@ -365,28 +364,4 @@ def get_embeddings(
     return EmbeddingModelFactory.get_model(model_name, **kwargs)
 
 
-# =============================================================================
-# COMPATIBILITY LAYER
-# =============================================================================
-
-class LangChainCompatibleEmbeddings:
-    """
-    LangChain-compatible wrapper for NativeEmbeddings.
-
-    Implements the LangChain Embeddings interface for easy migration.
-    """
-
-    def __init__(self, **kwargs):
-        self._embeddings = NativeEmbeddings(**kwargs)
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        return self._embeddings.embed_documents(texts)
-
-    def embed_query(self, text: str) -> List[float]:
-        return self._embeddings.embed_query(text)
-
-    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
-        return await self._embeddings.aembed_documents(texts)
-
-    async def aembed_query(self, text: str) -> List[float]:
-        return await self._embeddings.aembed_query(text)
+# Compatibility layer removed - no longer needed

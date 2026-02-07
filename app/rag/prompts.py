@@ -1,7 +1,5 @@
 """Prompt templates and context formatting for RAG."""
 
-from langchain_core.prompts import PromptTemplate
-
 # Chain-of-Thought prompt template
 COT_PROMPT_TEMPLATE = """You are an expert ML research assistant with deep knowledge of machine learning, deep learning, and AI research.
 
@@ -94,9 +92,5 @@ def build_prompt(question: str, retrieved: list[dict], use_cot: bool = True) -> 
     """
     context = format_context(retrieved)
 
-    if use_cot:
-        template = PromptTemplate.from_template(COT_PROMPT_TEMPLATE)
-    else:
-        template = PromptTemplate.from_template(SIMPLE_PROMPT_TEMPLATE)
-
+    template = COT_PROMPT_TEMPLATE if use_cot else SIMPLE_PROMPT_TEMPLATE
     return template.format(question=question, context=context)

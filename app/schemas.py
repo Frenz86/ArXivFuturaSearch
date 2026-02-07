@@ -19,7 +19,7 @@ custom error messages, and type safety.
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional, List, Dict, Any, Literal, Union
 from enum import Enum
 
@@ -564,7 +564,7 @@ class ErrorResponse(BaseModel):
     message: str = Field(..., description="Human-readable error message")
     details: Optional[List[ErrorDetail]] = Field(None, description="Detailed errors")
     request_id: Optional[str] = Field(None, description="Request ID for tracing")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Error timestamp")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Error timestamp")
 
 
 # =============================================================================
@@ -646,7 +646,7 @@ class WebhookPayload(BaseModel):
     """Webhook payload."""
 
     event_type: WebhookEventType = Field(..., description="Type of event")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     data: Dict[str, Any] = Field(..., description="Event data")
     signature: Optional[str] = Field(None, description="HMAC signature for verification")
 

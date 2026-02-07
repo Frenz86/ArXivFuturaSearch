@@ -6,7 +6,7 @@ search queries, configuration changes, and admin operations.
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
@@ -75,7 +75,7 @@ class AuditService:
             success=success,
             error_message=error_message,
             correlation_id=correlation_id,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
         )
 
         self.db.add(log_entry)
@@ -166,7 +166,7 @@ class AuditService:
         Returns:
             List of failed login attempt logs
         """
-        cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+        cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
 
         query = select(AuditLog).where(
             and_(
@@ -206,7 +206,7 @@ class AuditService:
         Returns:
             Dictionary with analysis results
         """
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         hour_ago = now - timedelta(hours=1)
         day_ago = now - timedelta(days=1)
 
@@ -280,7 +280,7 @@ class AuditService:
         Returns:
             Dictionary with activity statistics
         """
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
 
         # Get all user logs in period
         result = await self.db.execute(
@@ -332,7 +332,7 @@ class AuditService:
         Returns:
             Number of logs deleted
         """
-        cutoff = datetime.utcnow() - timedelta(days=retention_days)
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
         # Get logs to delete
         result = await self.db.execute(
@@ -368,7 +368,7 @@ class AuditService:
         Returns:
             Dictionary with statistics
         """
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
 
         # Get all logs in period
         result = await self.db.execute(

@@ -4,7 +4,7 @@ Authentication service with business logic for user management.
 Handles user registration, login, OAuth, sessions, and audit logging.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -191,7 +191,7 @@ class AuthService:
             return None
 
         # Update last login
-        user.last_login = datetime.utcnow()
+        user.last_login = datetime.now(UTC)
         await self.db.commit()
 
         return user
@@ -243,7 +243,7 @@ class AuthService:
             refresh_token_hash=SecurityManager.hash_token(refresh_token),
             ip_address=ip_address,
             user_agent=user_agent,
-            expires_at=datetime.utcnow() + refresh_expire,
+            expires_at=datetime.now(UTC) + refresh_expire,
         )
 
         self.db.add(session)
@@ -300,7 +300,7 @@ class AuthService:
             return None
 
         # Check expiration
-        if session.expires_at < datetime.utcnow():
+        if session.expires_at < datetime.now(UTC):
             return None
 
         # Get user

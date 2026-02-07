@@ -5,7 +5,7 @@ Supports PDF, Markdown, BibTeX, JSON, and CSV exports with proper citations.
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, UTC
 from io import BytesIO
 
 from app.logging_config import get_logger
@@ -166,7 +166,7 @@ class ExportManager:
         import json
 
         data = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "metadata": metadata or {},
             "count": len(results),
             "results": [],

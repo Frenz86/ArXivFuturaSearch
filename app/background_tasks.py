@@ -21,7 +21,7 @@ the search index.
 import asyncio
 import feedparser
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import List, Dict, Any, Optional, Callable
 from dataclasses import dataclass
 
@@ -260,7 +260,7 @@ class ArXivFeedParser:
             ]
 
         # Calculate date cutoff
-        cutoff_date = datetime.utcnow() - timedelta(days=days_back)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days_back)
 
         # Fetch from all categories
         tasks = [
@@ -361,7 +361,7 @@ class IndexUpdateTask:
             "papers_fetched": len(papers),
             "papers_indexed": 0,
             "errors": 0,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         if not papers:
@@ -381,7 +381,7 @@ class IndexUpdateTask:
         else:
             logger.warning("No index callback provided, papers not indexed")
 
-        self._last_update = datetime.utcnow()
+        self._last_update = datetime.now(UTC)
         return stats
 
     async def start(self) -> None:

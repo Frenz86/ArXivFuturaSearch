@@ -6,7 +6,7 @@ Run with: pytest tests/test_background_tasks.py -v
 import pytest
 import feedparser
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 
 # =============================================================================
@@ -164,7 +164,7 @@ class TestArXivFeedParser:
         parser = ArXivFeedParser()
 
         # Get papers from last 7 days
-        cutoff = datetime.utcnow() - timedelta(days=7)
+        cutoff = datetime.now(UTC) - timedelta(days=7)
         recent = parser.filter_recent(sample_papers, days=7)
 
         # All sample papers are recent (2024-01-15, 2024-01-16)
@@ -290,11 +290,11 @@ class TestIndexUpdateTask:
         assert task.should_run() is True
 
         # After running, should not run immediately
-        task._last_run = datetime.utcnow()
+        task._last_run = datetime.now(UTC)
         assert task.should_run() is False
 
         # After interval, should run again
-        task._last_run = datetime.utcnow() - timedelta(seconds=61)
+        task._last_run = datetime.now(UTC) - timedelta(seconds=61)
         assert task.should_run() is True
 
 

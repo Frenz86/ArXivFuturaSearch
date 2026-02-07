@@ -9,7 +9,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import List, Dict, Any
-from datetime import datetime
+from datetime import datetime, UTC
 
 import httpx
 
@@ -95,7 +95,7 @@ class NotificationService:
         """
         payload = {
             "alert_name": alert_name,
-            "triggered_at": datetime.utcnow().isoformat(),
+            "triggered_at": datetime.now(UTC).isoformat(),
             "papers": papers,
             "count": len(papers),
         }

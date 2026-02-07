@@ -1,4 +1,4 @@
-"""RAG chain creation — native implementation (no LangChain)."""
+"""RAG chain creation — native implementation."""
 
 import httpx
 
@@ -25,10 +25,6 @@ def _format_docs(docs) -> str:
 
 def create_rag_chain(retriever, use_cot: bool = True, streaming: bool = False):
     """Create a native RAG chain.
-
-    Returns an async callable that accepts a question string and returns
-    the generated answer.  The returned object also exposes an ``ainvoke``
-    method for compatibility with code that previously used LangChain chains.
 
     Args:
         retriever: Object with an ``invoke(question)`` or ``aretrieve(question)``

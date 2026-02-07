@@ -1,5 +1,5 @@
 """
-Native RAG implementation without LangChain dependency.
+Native RAG implementation.
 
 This module provides a complete RAG pipeline using native implementations
 for embeddings, retrieval, and LLM interactions.
@@ -293,7 +293,7 @@ class Retriever:
 
 class RAGPipeline:
     """
-    Complete RAG pipeline without LangChain.
+    Complete RAG pipeline for retrieval-augmented generation.
 
     Handles retrieval, context building, and answer generation.
     """
@@ -608,37 +608,4 @@ def create_rag_pipeline(
     return RAGPipeline(retriever=retriever, **kwargs)
 
 
-# =============================================================================
-# COMPATIBILITY LAYER
-# =============================================================================
-
-class LangChainCompatibleRAG:
-    """
-    LangChain-compatible wrapper for native RAG.
-
-    Provides interface similar to LangChain's RetrievalQA.
-    """
-
-    def __init__(self, pipeline: RAGPipeline):
-        self.pipeline = pipeline
-
-    async def ainvoke(
-        self,
-        inputs: Dict[str, Any],
-        config: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """Async invoke for LangChain compatibility."""
-        question = inputs.get("query", inputs.get("question", ""))
-        result = await self.pipeline.query(question, **kwargs)
-        return result.to_dict()
-
-    def invoke(
-        self,
-        inputs: Dict[str, Any],
-        config: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """Sync invoke for LangChain compatibility."""
-        import asyncio
-        return asyncio.run(self.ainvoke(inputs, config, **kwargs))
+# Compatibility layer removed - no longer needed

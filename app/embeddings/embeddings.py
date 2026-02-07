@@ -1,12 +1,11 @@
-"""Embedding generation using LangChain with HuggingFace models."""
+"""Embedding generation using sentence-transformers directly."""
 
 import threading
 from functools import lru_cache
 from typing import List
 
 import numpy as np
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_core.embeddings import Embeddings
+from sentence_transformers import SentenceTransformer
 
 from app.config import settings
 from app.logging_config import get_logger
@@ -17,37 +16,8 @@ logger = get_logger(__name__)
 _embedder_lock = threading.Lock()
 
 
-class E5EmbeddingsWrapper(Embeddings):
-    """
-    Wrapper for LangChain embeddings that adds E5 model prefixes.
-
-    E5 models require:
-    - "query: " prefix for questions
-    - "passage: " prefix for documents
-    """
-
-    def __init__(self, base_embeddings: HuggingFaceEmbeddings):
-        """Initialize the wrapper."""
-        self.base_embeddings = base_embeddings
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Embed documents with "passage: " prefix for E5 models."""
-        prefixed = ["passage: " + t for t in texts]
-        return self.base_embeddings.embed_documents(prefixed)
-
-    def embed_query(self, text: str) -> List[float]:
-        """Embed query with "query: " prefix for E5 models."""
-        prefixed = "query: " + text
-        return self.base_embeddings.embed_query(prefixed)
-
-    @property
-    def dimension(self) -> int:
-        """Get embedding dimension."""
-        return len(self.embed_query("test"))
-
-
 class Embedder:
-    """Thread-safe wrapper for LangChain HuggingFaceEmbeddings."""
+    """Thread-safe wrapper for SentenceTransformer embeddings."""
 
     _instances: dict[str, "Embedder"] = {}
 
@@ -62,29 +32,27 @@ class Embedder:
         return cls._instances[model_name]
 
     def __init__(self, model_name: str):
-        """Initialize the embedder using LangChain (only once per model)."""
+        """Initialize the embedder using sentence-transformers (only once per model)."""
         if self._initialized:
             return
 
-        logger.info("Loading embedding model via LangChain", model=model_name)
+        logger.info("Loading embedding model", model=model_name)
         self.model_name = model_name
 
         # Check if this is an E5 model
         self._is_e5_model = "e5" in model_name.lower()
 
-        # Initialize LangChain HuggingFaceEmbeddings
-        self.langchain_embeddings = HuggingFaceEmbeddings(
-            model_name=model_name,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
+        # Initialize SentenceTransformer directly
+        self._model = SentenceTransformer(
+            model_name,
+            device="cpu",
         )
 
-        # Get dimension from first embedding
-        test_query = "query: test" if self._is_e5_model else "test"
-        self._dimension = len(self.langchain_embeddings.embed_query(test_query))
+        # Get dimension
+        self._dimension = self._model.get_sentence_embedding_dimension()
 
         self._initialized = True
-        logger.info("Embedding model loaded via LangChain", model=model_name, dim=self._dimension, is_e5=self._is_e5_model)
+        logger.info("Embedding model loaded", model=model_name, dim=self._dimension, is_e5=self._is_e5_model)
 
     @property
     def is_e5_model(self) -> bool:
@@ -106,7 +74,13 @@ class Embedder:
             prefix = "query: " if is_query else "passage: "
             texts = [prefix + t for t in texts]
 
-        vectors = self.langchain_embeddings.embed_documents(texts)
+        vectors = self._model.encode(
+            texts,
+            batch_size=batch_size,
+            show_progress_bar=show_progress and len(texts) > 10,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+        )
         return np.asarray(vectors, dtype="float32")
 
     def embed_query(self, query: str) -> np.ndarray:
@@ -114,14 +88,27 @@ class Embedder:
         if self._is_e5_model:
             query = "query: " + query
 
-        vector = self.langchain_embeddings.embed_query(query)
+        vector = self._model.encode(
+            query,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+        )
         return np.asarray(vector, dtype="float32")
 
-    def get_langchain_embeddings(self) -> HuggingFaceEmbeddings | Embeddings:
-        """Get the LangChain embeddings object (wrapped for E5 models)."""
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed documents, returning list of float lists (compatible interface)."""
+        if not texts:
+            return []
+
         if self._is_e5_model:
-            return E5EmbeddingsWrapper(self.langchain_embeddings)
-        return self.langchain_embeddings
+            texts = ["passage: " + t for t in texts]
+
+        vectors = self._model.encode(
+            texts,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+        )
+        return vectors.tolist()
 
 
 @lru_cache(maxsize=1)

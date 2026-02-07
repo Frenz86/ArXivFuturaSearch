@@ -24,7 +24,6 @@ from typing import Optional, List, Dict, Any
 from functools import lru_cache
 
 import numpy as np
-from langchain_core.vectorstores import VectorStore
 
 from app.logging_config import get_logger
 from app.config import settings
@@ -237,7 +236,7 @@ class HybridSearchEngine:
 
     def __init__(
         self,
-        vector_store: VectorStore,
+        vector_store: Any,
         alpha: float = 0.5,
         k: int = 60,
     ):
@@ -245,7 +244,7 @@ class HybridSearchEngine:
         Initialize hybrid search engine.
 
         Args:
-            vector_store: LangChain vector store for semantic search
+            vector_store: Vector store for semantic search
             alpha: Weight for vector search (0-1, 0.5 = equal weight)
             k: RRF constant (higher = more emphasis on top ranks)
         """
@@ -474,7 +473,7 @@ def z_score_normalize(scores: List[float]) -> List[float]:
 _hybrid_engine: Optional[HybridSearchEngine] = None
 
 
-def get_hybrid_search_engine(vector_store: VectorStore) -> HybridSearchEngine:
+def get_hybrid_search_engine(vector_store: Any) -> HybridSearchEngine:
     """
     Get or create global hybrid search engine.
 

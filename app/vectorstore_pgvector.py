@@ -1,4 +1,4 @@
-"""Pgvector-based hybrid vector store using LangChain PostgreSQL.
+"""Pgvector-based hybrid vector store using native PostgreSQL + pgvector.
 
 
 # Copyright 2025 ArXivFuturaSearch Contributors
@@ -18,15 +18,12 @@ This module provides a PostgreSQL + pgvector implementation of the vector store
 for production use with better scalability, persistence, and concurrent access.
 """
 
-import os
-from typing import Optional, Any
-from contextlib import contextmanager
+import re
+from typing import Optional
 
 import numpy as np
+import rank_bm25
 from sqlalchemy import create_engine, text
-from langchain_community.retrievers import BM25Retriever
-from langchain_core.documents import Document
-from langchain_postgres import PGVector
 
 from app.config import settings
 from app.logging_config import get_logger
@@ -48,17 +45,20 @@ class PgvectorStore:
 
     def __init__(self, collection_name: str = "arxiv_papers"):
         """
-        Initialize the Pgvector hybrid store with LangChain.
+        Initialize the Pgvector hybrid store with native SQL.
 
         Args:
             collection_name: Name of the collection (used as table name)
         """
+        # Validate collection_name to prevent SQL injection
+        if not re.match(r'^[a-zA-Z0-9_]+$', collection_name):
+            raise ValueError(f"Invalid collection_name: {collection_name}")
+
         self.collection_name = collection_name
-        self.table_name = f"langchain_pg_collection_{collection_name}"
+        self.table_name = f"pgvector_store_{collection_name}"
 
         # Get embeddings
-        embedder = get_embedder()
-        self.langchain_embeddings = embedder.get_langchain_embeddings()
+        self._embedder = get_embedder()
 
         # Build PostgreSQL connection string
         self.connection_string = self._build_connection_string()
@@ -68,37 +68,22 @@ class PgvectorStore:
             self.connection_string,
             pool_size=settings.POSTGRES_POOL_SIZE,
             max_overflow=settings.POSTGRES_MAX_OVERFLOW,
-            pool_pre_ping=True,  # Verify connections before using
-        )
-
-        self.SessionLocal = create_engine(
-            self.connection_string,
-            pool_size=settings.POSTGRES_POOL_SIZE,
-            max_overflow=settings.POSTGRES_MAX_OVERFLOW,
             pool_pre_ping=True,
         )
 
-        # Initialize LangChain PGVector store
-        self.vectorstore = PGVector(
-            embeddings=self.langchain_embeddings,
-            collection_name=collection_name,
-            connection=self.connection_string,
-            use_jsonb=True,
-            distance_strategy="cosine",
-        )
-
-        # Ensure pgvector extension is installed
+        # Ensure pgvector extension is installed and table exists
         self._ensure_pgvector_extension()
+        self._ensure_table_exists()
 
         # BM25 retriever (will be populated when documents are added)
-        self.bm25_retriever: Optional[BM25Retriever] = None
-        self._documents: list[Document] = []
+        self._bm25: Optional[rank_bm25.BM25Okapi] = None
+        self._bm25_corpus: list[str] = []
 
         # Try to load existing documents for BM25
         self._load_documents_for_bm25()
 
         logger.info(
-            "Initialized PgvectorStore with LangChain",
+            "Initialized PgvectorStore (native)",
             collection=collection_name,
             connection=self._safe_connection_string(),
             documents=self.count(),
@@ -127,12 +112,15 @@ class PgvectorStore:
             params: Optional parameters dict
 
         Returns:
-            Result object
+            Result object (must be used within the context)
         """
-        with self.SessionLocal.connect() as conn:
+        with self.engine.connect() as conn:
             if params:
-                return conn.execute(text(query), params)
-            return conn.execute(text(query))
+                result = conn.execute(text(query), params)
+            else:
+                result = conn.execute(text(query))
+            # Buffer all results before connection closes
+            return list(result)
 
     def _ensure_pgvector_extension(self) -> None:
         """Ensure pgvector extension is installed in PostgreSQL."""
@@ -140,7 +128,7 @@ class PgvectorStore:
             result = self._execute_sql(
                 "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector')"
             )
-            exists = result.scalar()
+            exists = result[0][0] if result else False
 
             if not exists:
                 logger.warning(
@@ -152,36 +140,59 @@ class PgvectorStore:
         except Exception as e:
             logger.error("Failed to check pgvector extension", error=str(e))
 
+    def _ensure_table_exists(self) -> None:
+        """Create the vector store table if it doesn't exist."""
+        dim = self._embedder.dimension
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text(f"""
+                    CREATE TABLE IF NOT EXISTS {self.table_name} (
+                        chunk_id TEXT PRIMARY KEY,
+                        embedding vector({dim}),
+                        document TEXT NOT NULL,
+                        metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+
+                # Create index for faster similarity search
+                conn.execute(text(f"""
+                    CREATE INDEX IF NOT EXISTS {self.table_name}_embedding_idx
+                    ON {self.table_name}
+                    USING ivfflat (embedding vector_cosine_ops)
+                    WITH (lists = 100)
+                """))
+
+                # Create GIN index for metadata filtering
+                conn.execute(text(f"""
+                    CREATE INDEX IF NOT EXISTS {self.table_name}_metadata_idx
+                    ON {self.table_name}
+                    USING GIN (metadata)
+                """))
+                conn.commit()
+                logger.debug(f"Table {self.table_name} is ready")
+        except Exception as e:
+            logger.error("Failed to create table", error=str(e))
+
     def _load_documents_for_bm25(self) -> None:
         """Load existing documents from PostgreSQL to initialize BM25."""
         try:
-            # Use LangChain's connection to get all documents
             result = self._execute_sql(
-                """
-                SELECT id, document, metadata
-                FROM langchain_pg_embedding
-                WHERE collection_id = (
-                    SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
-                )
-                """,
-                {"collection_name": self.collection_name}
+                f"SELECT document FROM {self.table_name} ORDER BY chunk_id"
             )
 
-            self._documents = []
-            for row in result:
-                self._documents.append(
-                    Document(
-                        page_content=row[1],  # document
-                        metadata=row[2] or {}  # metadata
-                    )
-                )
+            self._bm25_corpus = [row[0] for row in result]
 
-            # Initialize BM25 retriever
-            if self._documents:
-                self.bm25_retriever = BM25Retriever.from_documents(self._documents)
-                logger.info("Loaded BM25 retriever", documents=len(self._documents))
+            if self._bm25_corpus:
+                self._bm25 = rank_bm25.BM25Okapi(self._tokenize(self._bm25_corpus))
+                logger.info("Loaded BM25 retriever", documents=len(self._bm25_corpus))
         except Exception as e:
             logger.warning("Could not load existing documents for BM25", error=str(e))
+
+    @staticmethod
+    def _tokenize(texts: list[str]) -> list[list[str]]:
+        """Simple whitespace tokenizer for BM25."""
+        return [text.lower().split() for text in texts]
 
     def add(
         self,
@@ -194,7 +205,7 @@ class PgvectorStore:
         Add documents to the store.
 
         Args:
-            vectors: NumPy array of embeddings (n, dim) - not used with LangChain
+            vectors: NumPy array of embeddings (n, dim)
             chunk_ids: List of unique chunk identifiers
             texts: List of text chunks
             metas: List of metadata dictionaries
@@ -203,48 +214,78 @@ class PgvectorStore:
             logger.warning("No documents to add")
             return
 
-        # Create LangChain Document objects
-        documents = [
-            Document(page_content=text, metadata=meta)
-            for text, meta in zip(texts, metas)
-        ]
+        # Insert documents into PostgreSQL
+        try:
+            with self.engine.connect() as conn:
+                for chunk_id, vector, text, meta in zip(chunk_ids, vectors, texts, metas):
+                    # Convert numpy array to pgvector string format: "[x,y,z,...]"
+                    vector_str = "[" + ",".join(map(str, vector)) + "]"
 
-        # Add to PGVector using LangChain (it will compute embeddings automatically)
-        self.vectorstore.add_documents(documents=documents, ids=chunk_ids)
+                    conn.execute(text(f"""
+                        INSERT INTO {self.table_name} (chunk_id, embedding, document, metadata)
+                        VALUES (:chunk_id, :embedding::vector, :document, :metadata::jsonb)
+                        ON CONFLICT (chunk_id) DO UPDATE
+                        SET embedding = EXCLUDED.embedding,
+                            document = EXCLUDED.document,
+                            metadata = EXCLUDED.metadata
+                    """), {
+                        "chunk_id": chunk_id,
+                        "embedding": vector_str,
+                        "document": text,
+                        "metadata": meta,
+                    })
+                conn.commit()
 
-        # Update documents list and rebuild BM25
-        self._documents.extend(documents)
-        self.bm25_retriever = BM25Retriever.from_documents(self._documents)
+            # Update BM25 corpus and rebuild index
+            self._bm25_corpus.extend(texts)
+            self._bm25 = rank_bm25.BM25Okapi(self._tokenize(self._bm25_corpus))
 
-        logger.info(
-            "Added documents to PgvectorStore",
-            count=len(chunk_ids),
-            total=self.count(),
-        )
+            logger.info(
+                "Added documents to PgvectorStore",
+                count=len(chunk_ids),
+                total=self.count(),
+            )
+        except Exception as e:
+            logger.error("Failed to add documents", error=str(e))
 
-    def _build_filter_dict(self, filters: Optional[dict]) -> Optional[dict]:
+    def _build_filter_dict(self, filters: Optional[dict]) -> tuple[str, dict]:
         """
-        Convert filter dict to LangChain PGVector filter format.
+        Convert filter dict to SQL WHERE clause for JSONB metadata.
 
         Args:
             filters: Filter dictionary
 
         Returns:
-            LangChain compatible filter dict
+            Tuple of (where_clause, params_dict)
         """
         if not filters:
-            return None
+            return "", {}
 
-        # LangChain PGVector supports metadata filtering via dict
-        # Most filters work as-is, but we may need to transform some
-        filter_dict = {}
+        conditions = []
+        params = {}
 
-        for key, value in filters.items():
-            # For pgvector, we pass the filters as-is to LangChain
-            # LangChain will handle the conversion to SQL WHERE clauses
-            filter_dict[key] = value
+        for i, (key, value) in enumerate(filters.items()):
+            param_name = f"filter_{i}"
 
-        return filter_dict
+            # Handle date range filters
+            if key == "published_after" and isinstance(value, str):
+                conditions.append(f"(metadata->>'published_date')::date >= :{param_name}")
+                params[param_name] = value
+            elif key == "published_before" and isinstance(value, str):
+                conditions.append(f"(metadata->>'published_date')::date <= :{param_name}")
+                params[param_name] = value
+            # Handle list containment (for authors, tags, etc.)
+            elif key in ("authors", "tags", "categories") and isinstance(value, list):
+                # Check if any value in the list matches
+                conditions.append(f"metadata->>'{key}' ?| :{param_name}")
+                params[param_name] = value
+            # Handle exact match
+            else:
+                conditions.append(f"metadata->>'{key}' = :{param_name}")
+                params[param_name] = value
+
+        where_clause = " AND " + " AND ".join(conditions) if conditions else ""
+        return where_clause, params
 
     def search(
         self,
@@ -259,7 +300,7 @@ class PgvectorStore:
         Hybrid search combining semantic and lexical search.
 
         Args:
-            query_vec: Query embedding vector (not used with LangChain)
+            query_vec: Query embedding vector (optional, will be computed if not provided)
             query_text: Query text for both semantic and BM25
             top_k: Number of results to return
             semantic_weight: Weight for semantic scores
@@ -275,50 +316,65 @@ class PgvectorStore:
 
         retrieval_k = min(top_k * 4, self.count()) if self.count() > 0 else top_k
 
-        # Semantic search using PGVector similarity search
-        embedder = get_embedder()
-        query_embedding = embedder.embed_query(query_text)
+        # Semantic search using pgvector
+        if query_vec is None or query_vec.size == 0:
+            query_embedding = self._embedder.embed_query(query_text)
+        else:
+            query_embedding = query_vec
 
-        # Build search kwargs
-        search_kwargs = {"k": retrieval_k}
-        if filters:
-            # Use the same filter format as ChromaDB
-            search_kwargs["filter"] = self._build_filter_dict(filters)
+        # Build WHERE clause for filters
+        where_clause, filter_params = self._build_filter_dict(filters)
 
-        # Get similarity scores (PGVector returns distances, convert to similarities)
-        semantic_results_with_scores = self.vectorstore.similarity_search_with_score_by_vector(
-            embedding=query_embedding,
-            **search_kwargs
-        )
+        # Convert query vector to pgvector format
+        query_vec_str = "[" + ",".join(map(str, query_embedding)) + "]"
+
+        # Execute similarity search using cosine distance
+        semantic_query = f"""
+            SELECT
+                chunk_id,
+                document,
+                metadata,
+                1 - (embedding <=> :query_embedding::vector) AS similarity
+            FROM {self.table_name}
+            WHERE 1=1 {where_clause}
+            ORDER BY embedding <=> :query_embedding::vector
+            LIMIT :limit
+        """
+
+        params = {
+            "query_embedding": query_vec_str,
+            "limit": retrieval_k,
+            **filter_params,
+        }
+
+        rows = self._execute_sql(semantic_query, params)
 
         # Process semantic results
         semantic_results = []
-        for i, (doc, distance) in enumerate(semantic_results_with_scores):
-            # PGVector with cosine distance: lower is better, convert to similarity
-            similarity = 1.0 - float(distance)
+        for i, row in enumerate(rows):
             semantic_results.append({
-                "text": doc.page_content,
-                "meta": doc.metadata,
-                "semantic_score": similarity,
+                "text": row[1],  # document
+                "meta": row[2],  # metadata
+                "semantic_score": float(row[3]),  # similarity
                 "semantic_rank": i,
             })
 
         # If BM25 is available, combine results
         bm25_lookup = {}
-        if self.bm25_retriever:
-            self.bm25_retriever.k = retrieval_k
+        if self._bm25 and query_text:
             try:
-                bm25_docs = self.bm25_retriever.invoke(query_text)
+                tokenized_query = self._tokenize([query_text])[0]
+                scores = self._bm25.get_scores(tokenized_query)
+                top_indices = np.argsort(-scores)[:retrieval_k]
 
-                # Create lookup for BM25 results
-                for i, doc in enumerate(bm25_docs):
-                    content_key = doc.page_content[:100]
-                    bm25_lookup[content_key] = {
-                        "text": doc.page_content,
-                        "meta": doc.metadata,
-                        "bm25_score": 1.0 - (i / len(bm25_docs)),
-                        "bm25_rank": i,
-                    }
+                for rank, idx in enumerate(top_indices):
+                    if scores[idx] > 0:  # Only include positive scores
+                        bm25_lookup[self._bm25_corpus[idx][:100]] = {
+                            "text": self._bm25_corpus[idx],
+                            "meta": {},
+                            "bm25_score": float(scores[idx]),
+                            "bm25_rank": rank,
+                        }
             except Exception as e:
                 logger.warning("BM25 retrieval failed", error=str(e))
 
@@ -330,9 +386,12 @@ class PgvectorStore:
             # Start with semantic score
             combined_score = semantic_weight * sem_result["semantic_score"]
 
-            # Add BM25 score if available
+            # Add BM25 score if available (normalized)
             if content_key in bm25_lookup:
-                combined_score += bm25_weight * bm25_lookup[content_key]["bm25_score"]
+                # Normalize BM25 score to 0-1 range
+                bm25_max = max(r["bm25_score"] for r in bm25_lookup.values()) if bm25_lookup else 1.0
+                normalized_bm25 = bm25_lookup[content_key]["bm25_score"] / max(bm25_max, 0.001)
+                combined_score += bm25_weight * normalized_bm25
 
             combined_results.append({
                 "score": combined_score,
@@ -382,7 +441,6 @@ class PgvectorStore:
             logger.warning("Empty query_text provided for ensemble search")
             return []
 
-        embedder = get_embedder()
         retrieval_k = min(top_k * 3, self.count()) if self.count() > 0 else top_k
 
         # Generate query variants
@@ -394,45 +452,59 @@ class PgvectorStore:
 
         logger.debug("Ensemble search", variants=len(query_variants), queries=query_variants)
 
+        # Build WHERE clause for filters
+        where_clause, filter_params = self._build_filter_dict(filters)
+
         # Search with each query variant
         all_results = []
         for variant_query in query_variants:
-            query_embedding = embedder.embed_query(variant_query)
+            query_embedding = self._embedder.embed_query(variant_query)
+            query_vec_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
-            # Build search kwargs
-            search_kwargs = {"k": retrieval_k}
-            if filters:
-                search_kwargs["filter"] = self._build_filter_dict(filters)
+            params = {
+                "query_embedding": query_vec_str,
+                "limit": retrieval_k,
+                **filter_params,
+            }
 
             try:
-                semantic_results_with_scores = self.vectorstore.similarity_search_with_score_by_vector(
-                    embedding=query_embedding,
-                    **search_kwargs
-                )
+                rows = self._execute_sql(f"""
+                    SELECT
+                        chunk_id,
+                        document,
+                        metadata,
+                        1 - (embedding <=> :query_embedding::vector) AS similarity
+                    FROM {self.table_name}
+                    WHERE 1=1 {where_clause}
+                    ORDER BY embedding <=> :query_embedding::vector
+                    LIMIT :limit
+                """, params)
 
-                for doc, distance in semantic_results_with_scores:
-                    similarity = 1.0 - float(distance)
+                for row in rows:
                     all_results.append({
-                        "text": doc.page_content,
-                        "meta": doc.metadata,
-                        "score": similarity,  # Will be replaced by RRF score
+                        "text": row[1],  # document
+                        "meta": row[2],  # metadata
+                        "score": float(row[3]),  # similarity (will be replaced by RRF)
                         "query_used": variant_query,
                     })
             except Exception as e:
                 logger.warning("Search failed for variant", variant=variant_query, error=str(e))
 
         # If BM25 is available, add BM25 results to ensemble
-        if self.bm25_retriever and all_results:
-            self.bm25_retriever.k = retrieval_k
+        if self._bm25 and query_text:
             try:
-                bm25_docs = self.bm25_retriever.invoke(query_text)
-                for i, doc in enumerate(bm25_docs):
-                    all_results.append({
-                        "text": doc.page_content,
-                        "meta": doc.metadata,
-                        "score": 1.0 - (i / len(bm25_docs)),
-                        "query_used": "bm25",
-                    })
+                tokenized_query = self._tokenize([query_text])[0]
+                scores = self._bm25.get_scores(tokenized_query)
+                top_indices = np.argsort(-scores)[:retrieval_k]
+
+                for rank, idx in enumerate(top_indices):
+                    if scores[idx] > 0:
+                        all_results.append({
+                            "text": self._bm25_corpus[idx],
+                            "meta": {},
+                            "score": float(scores[idx]),
+                            "query_used": "bm25",
+                        })
             except Exception as e:
                 logger.warning("BM25 retrieval failed in ensemble", error=str(e))
 
@@ -453,64 +525,24 @@ class PgvectorStore:
 
         return rrf_results
 
-    def get_ensemble_retriever(
-        self,
-        top_k: int = 5,
-        semantic_weight: float = 0.7,
-        bm25_weight: float = 0.3,
-    ):
-        """
-        Get a retriever for hybrid search.
-
-        Note: Returns semantic retriever only. Use search() for true hybrid search.
-
-        Args:
-            top_k: Number of results to return
-            semantic_weight: Weight for semantic retriever (not used)
-            bm25_weight: Weight for BM25 retriever (not used)
-
-        Returns:
-            LangChain retriever object (semantic only)
-        """
-        logger.warning(
-            "get_ensemble_retriever() returns semantic-only retriever. "
-            "Use search() method for hybrid search (semantic + BM25)."
-        )
-        return self.vectorstore.as_retriever(search_kwargs={"k": top_k})
-
     def count(self) -> int:
         """Get total number of documents in the collection."""
         try:
-            result = self._execute_sql(
-                """
-                SELECT COUNT(DISTINCT c.id)
-                FROM langchain_pg_embedding c
-                WHERE c.collection_id = (
-                    SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
-                )
-                """,
-                {"collection_name": self.collection_name}
-            )
-            return result.scalar() or 0
+            result = self._execute_sql(f"SELECT COUNT(*) FROM {self.table_name}")
+            return result[0][0] if result else 0
         except Exception as e:
             logger.error("Failed to count documents", error=str(e))
-            return len(self._documents)
+            return len(self._bm25_corpus)
 
     def reset(self) -> None:
         """Delete all documents from the collection."""
         try:
-            # Delete all embeddings for this collection
-            self._execute_sql(
-                """
-                DELETE FROM langchain_pg_embedding
-                WHERE collection_id = (
-                    SELECT uuid FROM langchain_pg_collection WHERE name = :collection_name
-                )
-                """,
-                {"collection_name": self.collection_name}
-            )
-            self._documents = []
-            self.bm25_retriever = None
+            with self.engine.connect() as conn:
+                conn.execute(text(f"DELETE FROM {self.table_name}"))
+                conn.commit()
+
+            self._bm25_corpus = []
+            self._bm25 = None
             logger.info("Reset PgvectorStore")
         except Exception as e:
             logger.error("Failed to reset PgvectorStore", error=str(e))
@@ -518,13 +550,12 @@ class PgvectorStore:
     def delete_collection(self) -> None:
         """Permanently delete the collection."""
         try:
-            # Delete the collection itself
-            self._execute_sql(
-                "DELETE FROM langchain_pg_collection WHERE name = :collection_name",
-                {"collection_name": self.collection_name}
-            )
-            self._documents = []
-            self.bm25_retriever = None
+            with self.engine.connect() as conn:
+                conn.execute(text(f"DROP TABLE IF EXISTS {self.table_name}"))
+                conn.commit()
+
+            self._bm25_corpus = []
+            self._bm25 = None
             logger.info("Deleted collection", name=self.collection_name)
         except Exception as e:
             logger.error("Failed to delete collection", error=str(e))

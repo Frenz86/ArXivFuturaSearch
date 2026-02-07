@@ -2,7 +2,7 @@
 Native BM25 implementation for lexical search.
 
 This module provides a fast, memory-efficient BM25 implementation
-to replace LangChain's BM25 wrapper around rank-bm25.
+using rank-bm25.
 """
 
 from typing import List, Dict, Any, Optional, Tuple, Union

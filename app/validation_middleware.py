@@ -20,7 +20,7 @@ with detailed error reporting and security checks.
 
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional, Dict, Any, Type, Callable
 
 from fastapi import Request, Response, HTTPException
@@ -198,7 +198,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             message=message,
             details=details,
             request_id=request_id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
         )
 
         return JSONResponse(

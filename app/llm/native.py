@@ -1,8 +1,8 @@
 """
 Native LLM implementation for OpenRouter API.
 
-This module provides a direct HTTP client for OpenRouter,
-replacing LangChain's LLM abstraction with better control and performance.
+This module provides a direct HTTP client for OpenRouter
+with full control and streaming support.
 """
 
 from typing import List, Dict, Any, Optional, Union, AsyncIterator, Iterator
@@ -114,8 +114,8 @@ class NativeLLM:
     """
     Native LLM client for OpenRouter API.
 
-    Provides direct HTTP access to LLM providers with better performance
-    and control than LangChain's abstraction layer.
+    Provides direct HTTP access to LLM providers with streaming
+    support and custom error handling.
     """
 
     def __init__(self, config: Optional[LLMConfig] = None):

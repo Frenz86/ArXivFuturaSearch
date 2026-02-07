@@ -5,7 +5,7 @@ Monitors ArXiv RSS feeds for new papers matching user keywords and sends notific
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from dataclasses import dataclass, field
 from enum import Enum
 import httpx
@@ -370,7 +370,7 @@ class AlertManager:
         await self.db.commit()
 
         # Update last triggered time
-        alert.last_triggered = datetime.utcnow()
+        alert.last_triggered = datetime.now(UTC)
 
         return success
 

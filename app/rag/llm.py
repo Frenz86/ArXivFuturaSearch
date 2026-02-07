@@ -1,7 +1,6 @@
 """LLM integration and generation functions.
 
 Native httpx-based implementation for OpenRouter and Ollama.
-No LangChain dependency required.
 """
 
 import json as _json
@@ -46,12 +45,8 @@ def _openrouter_payload(prompt: str, streaming: bool = False) -> dict:
 
 
 def get_llm(streaming: bool = False):
-    """Return a lightweight LLM wrapper with ainvoke / astream interface.
-
-    Duck-type compatible with LangChain's ChatModel so existing code that
-    calls ``llm.ainvoke(prompt)`` or ``async for chunk in llm.astream(...)``
-    continues to work without importing LangChain.
-    """
+    """Return a lightweight LLM wrapper with ainvoke / astream interface."""
+    return _SimpleLLM()
     return _SimpleLLM()
 
 
@@ -241,7 +236,7 @@ check_openrouter_health = check_llm_health
 
 
 class _ChunkProxy:
-    """Minimal wrapper so ``chunk.content`` works like a LangChain AIMessageChunk."""
+    """Minimal wrapper for streaming chunks with ``.content`` attribute."""
     __slots__ = ("content",)
 
     def __init__(self, content: str):
@@ -249,7 +244,7 @@ class _ChunkProxy:
 
 
 class _SimpleLLM:
-    """Lightweight LLM with ainvoke / astream — no LangChain needed.
+    """Lightweight LLM with ainvoke / astream support.
 
     Returned by ``get_llm()`` so that existing code calling
     ``llm.ainvoke(prompt)`` or ``async for chunk in llm.astream(prompt)``

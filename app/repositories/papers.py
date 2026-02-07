@@ -5,7 +5,7 @@ Provides data access for papers and chunks using the repository pattern.
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from uuid import uuid4
 
 from sqlalchemy import select, and_, or_, desc
@@ -245,7 +245,7 @@ class PaperRepository(BaseRepository):
         Returns:
             List of recent papers
         """
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
 
         results = [
             p for p in self._papers.values()
@@ -412,7 +412,7 @@ class PaperService:
             abstract=abstract,
             categories=categories or [],
             arxiv_id=arxiv_id,
-            published_date=datetime.utcnow(),
+            published_date=datetime.now(UTC),
         )
 
         paper = await self.paper_repo.create(paper)

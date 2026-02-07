@@ -185,22 +185,22 @@ app = FastAPI(
     title="ArXiv Futura Search",
     description="""Hybrid RAG pipeline for ML research papers with OpenRouter integration.
 
-## Features
-- Semantic search with hybrid BM25 + vector retrieval
-- Multi-turn conversations with context management
-- Export results (PDF, Markdown, BibTeX, JSON, CSV)
-- Alert system for ArXiv feed monitoring
-- Collaborative collections with annotations
-- OAuth2 authentication (Google, GitHub)
-- Comprehensive audit logging
+    ## Features
+    - Semantic search with hybrid BM25 + vector retrieval
+    - Multi-turn conversations with context management
+    - Export results (PDF, Markdown, BibTeX, JSON, CSV)
+    - Alert system for ArXiv feed monitoring
+    - Collaborative collections with annotations
+    - OAuth2 authentication (Google, GitHub)
+    - Comprehensive audit logging
 
-## Authentication
-Most endpoints are publicly accessible. Some features require authentication:
-- Create/manage alerts
-- Create/manage collections
-- Save conversations
-- Access audit logs (admin only)
-""",
+    ## Authentication
+    Most endpoints are publicly accessible. Some features require authentication:
+    - Create/manage alerts
+    - Create/manage collections
+    - Save conversations
+    - Access audit logs (admin only)
+    """,
     version=settings.VERSION,
     lifespan=lifespan,
     openapi_tags=[

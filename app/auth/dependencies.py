@@ -74,8 +74,8 @@ async def get_current_user(
         return None
 
     # Check if session expired
-    from datetime import datetime
-    if session.expires_at < datetime.utcnow():
+    from datetime import datetime, UTC
+    if session.expires_at < datetime.now(UTC):
         logger.warning("Expired session token", user_id=user_id)
         return None
 

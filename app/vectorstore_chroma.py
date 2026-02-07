@@ -1,4 +1,4 @@
-"""ChromaDB-based hybrid vector store using LangChain."""
+"""ChromaDB-based hybrid vector store using native chromadb + BM25."""
 
 
 # Copyright 2025 ArXivFuturaSearch Contributors
@@ -14,15 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from typing import Optional
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 import numpy as np
-from langchain_chroma import Chroma
-from langchain_community.retrievers import BM25Retriever
-from langchain_core.documents import Document
+from rank_bm25 import BM25Okapi
 
 from app.config import settings
 from app.logging_config import get_logger
@@ -32,26 +29,24 @@ from app.query_expansion import expand_query, reciprocal_rank_fusion, generate_q
 logger = get_logger(__name__)
 
 
+def _tokenize(text: str) -> list[str]:
+    """Simple whitespace tokenizer for BM25."""
+    return text.lower().split()
+
+
 class ChromaHybridStore:
     """
-    Hybrid vector store using LangChain's Chroma (semantic) + BM25 (lexical) search.
-
-    This class wraps LangChain's Chroma vector store and combines it with BM25
-    retrieval for hybrid search capabilities.
+    Hybrid vector store using native ChromaDB (semantic) + BM25Okapi (lexical) search.
     """
 
     def __init__(self, collection_name: str = "arxiv_papers"):
         """
-        Initialize the ChromaDB hybrid store with LangChain.
+        Initialize the ChromaDB hybrid store.
 
         Args:
             collection_name: Name of the ChromaDB collection
         """
         self.collection_name = collection_name
-
-        # Get embeddings
-        embedder = get_embedder()
-        self.langchain_embeddings = embedder.get_langchain_embeddings()
 
         # Initialize ChromaDB client
         self.client = chromadb.PersistentClient(
@@ -62,27 +57,26 @@ class ChromaHybridStore:
             ),
         )
 
-        # Initialize LangChain Chroma vector store
-        self.vectorstore = Chroma(
-            client=self.client,
-            collection_name=collection_name,
-            embedding_function=self.langchain_embeddings,
-            collection_metadata={
+        # Get or create collection
+        self.collection = self.client.get_or_create_collection(
+            name=collection_name,
+            metadata={
                 "hnsw:space": "cosine",
                 "hnsw:construction_ef": 200,
                 "hnsw:M": 16,
             },
         )
 
-        # BM25 retriever (will be populated when documents are added)
-        self.bm25_retriever: Optional[BM25Retriever] = None
-        self._documents: list[Document] = []
+        # BM25 index (will be populated when documents are loaded)
+        self._bm25: Optional[BM25Okapi] = None
+        self._doc_texts: list[str] = []
+        self._doc_metas: list[dict] = []
 
         # Try to load existing documents for BM25
         self._load_documents_for_bm25()
 
         logger.info(
-            "Initialized ChromaHybridStore with LangChain",
+            "Initialized ChromaHybridStore",
             collection=collection_name,
             documents=self.count(),
         )
@@ -90,24 +84,17 @@ class ChromaHybridStore:
     def _load_documents_for_bm25(self) -> None:
         """Load existing documents from Chroma to initialize BM25."""
         try:
-            # Get all documents from the collection
-            collection = self.client.get_collection(self.collection_name)
-            results = collection.get(include=["documents", "metadatas"])
+            results = self.collection.get(include=["documents", "metadatas"])
 
             if results["documents"]:
-                # Convert to LangChain Document objects
-                self._documents = [
-                    Document(
-                        page_content=doc,
-                        metadata=meta or {}
-                    )
-                    for doc, meta in zip(results["documents"], results["metadatas"])
-                ]
+                self._doc_texts = results["documents"]
+                self._doc_metas = results["metadatas"] or [{}] * len(self._doc_texts)
 
-                # Initialize BM25 retriever
-                if self._documents:
-                    self.bm25_retriever = BM25Retriever.from_documents(self._documents)
-                    logger.info("Loaded BM25 retriever", documents=len(self._documents))
+                # Build BM25 index
+                tokenized = [_tokenize(doc) for doc in self._doc_texts]
+                if tokenized:
+                    self._bm25 = BM25Okapi(tokenized)
+                    logger.info("Loaded BM25 index", documents=len(self._doc_texts))
         except Exception as e:
             logger.warning("Could not load existing documents for BM25", error=str(e))
 
@@ -122,7 +109,7 @@ class ChromaHybridStore:
         Add documents to the store.
 
         Args:
-            vectors: NumPy array of embeddings (n, dim) - not used with LangChain (it computes them)
+            vectors: NumPy array of embeddings (n, dim)
             chunk_ids: List of unique chunk identifiers
             texts: List of text chunks
             metas: List of metadata dictionaries
@@ -131,18 +118,19 @@ class ChromaHybridStore:
             logger.warning("No documents to add")
             return
 
-        # Create LangChain Document objects
-        documents = [
-            Document(page_content=text, metadata=meta)
-            for text, meta in zip(texts, metas)
-        ]
+        # Add to ChromaDB with pre-computed embeddings
+        self.collection.add(
+            ids=chunk_ids,
+            embeddings=vectors.tolist() if isinstance(vectors, np.ndarray) else vectors,
+            documents=texts,
+            metadatas=metas,
+        )
 
-        # Add to Chroma using LangChain (it will compute embeddings automatically)
-        self.vectorstore.add_documents(documents=documents, ids=chunk_ids)
-
-        # Update documents list and rebuild BM25
-        self._documents.extend(documents)
-        self.bm25_retriever = BM25Retriever.from_documents(self._documents)
+        # Update BM25 index
+        self._doc_texts.extend(texts)
+        self._doc_metas.extend(metas)
+        tokenized = [_tokenize(doc) for doc in self._doc_texts]
+        self._bm25 = BM25Okapi(tokenized)
 
         logger.info(
             "Added documents to ChromaHybridStore",
@@ -150,54 +138,8 @@ class ChromaHybridStore:
             total=self.count(),
         )
 
-    def _semantic_search(
-        self,
-        query_vec: np.ndarray,
-        top_k: int,
-        filters: Optional[dict] = None,
-    ) -> list[tuple[str, float, str, dict]]:
-        """
-        Semantic search using LangChain Chroma.
-
-        Note: This method is kept for backward compatibility; prefer search() for hybrid search.
-
-        Returns:
-            List of (chunk_id, score, text, metadata) tuples
-        """
-        # LangChain Chroma doesn't directly accept query vectors, so we use similarity_search_by_vector
-        # But first we need the query text for proper usage with LangChain
-        logger.warning("_semantic_search called directly - prefer search() for hybrid search")
-
-        # This is a fallback implementation
-        results = self.vectorstore._collection.query(
-            query_embeddings=[query_vec.tolist()],
-            n_results=min(top_k, self.count()),
-            where=self._build_where_clause(filters) if filters else None,
-            include=["documents", "metadatas", "distances"],
-        )
-
-        output = []
-        if results["ids"] and results["ids"][0]:
-            for idx in range(len(results["ids"][0])):
-                chunk_id = results["ids"][0][idx]
-                distance = results["distances"][0][idx]
-                score = 1.0 - distance  # Convert distance to similarity
-                text = results["documents"][0][idx]
-                meta = results["metadatas"][0][idx]
-                output.append((chunk_id, score, text, meta))
-
-        return output
-
     def _build_where_clause(self, filters: dict) -> dict:
-        """
-        Convert filter dict to ChromaDB where clause.
-
-        Args:
-            filters: Filter dictionary
-
-        Returns:
-            ChromaDB where clause
-        """
+        """Convert filter dict to ChromaDB where clause."""
         where_conditions = []
 
         for key, value in filters.items():
@@ -233,7 +175,7 @@ class ChromaHybridStore:
         Hybrid search combining semantic and lexical search.
 
         Args:
-            query_vec: Query embedding vector (not used with LangChain, kept for compatibility)
+            query_vec: Query embedding vector
             query_text: Query text for both semantic and BM25
             top_k: Number of results to return
             semantic_weight: Weight for semantic scores
@@ -249,16 +191,13 @@ class ChromaHybridStore:
 
         retrieval_k = min(top_k * 4, self.count()) if self.count() > 0 else top_k
 
-        # Direct ChromaDB query with actual similarity scores
-        collection = self.client.get_collection(self.collection_name)
-
         # Get embedder for query
         embedder = get_embedder()
         query_embedding = embedder.embed_query(query_text)
 
-        # Query ChromaDB with actual similarity search
-        chroma_results = collection.query(
-            query_embeddings=[query_embedding],
+        # Query ChromaDB directly
+        chroma_results = self.collection.query(
+            query_embeddings=[query_embedding.tolist()],
             n_results=retrieval_k,
             where=self._build_where_clause(filters) if filters else None,
             include=["documents", "metadatas", "distances"]
@@ -274,7 +213,6 @@ class ChromaHybridStore:
             chroma_results["metadatas"][0],
             chroma_results["distances"][0]
         )):
-            # Convert distance to similarity (cosine distance to similarity)
             similarity = 1.0 - distance
             semantic_results.append({
                 "text": doc,
@@ -285,21 +223,19 @@ class ChromaHybridStore:
 
         # If BM25 is available, combine results
         bm25_lookup = {}
-        if self.bm25_retriever:
-            self.bm25_retriever.k = retrieval_k
+        if self._bm25 and self._doc_texts:
             try:
-                bm25_docs = self.bm25_retriever.invoke(query_text)
+                tokenized_query = _tokenize(query_text)
+                bm25_scores = self._bm25.get_scores(tokenized_query)
 
-                # Create lookup for BM25 results
-                for i, doc in enumerate(bm25_docs):
-                    # Use content hash as key
-                    content_key = doc.page_content[:100]
-                    bm25_lookup[content_key] = {
-                        "text": doc.page_content,
-                        "meta": doc.metadata,
-                        "bm25_score": 1.0 - (i / len(bm25_docs)),  # Normalized rank score
-                        "bm25_rank": i,
-                    }
+                # Get top BM25 results
+                top_indices = np.argsort(bm25_scores)[::-1][:retrieval_k]
+                for rank, idx in enumerate(top_indices):
+                    if bm25_scores[idx] > 0:
+                        content_key = self._doc_texts[idx][:100]
+                        bm25_lookup[content_key] = {
+                            "bm25_score": 1.0 - (rank / len(top_indices)),
+                        }
             except Exception as e:
                 logger.warning("BM25 retrieval failed", error=str(e))
 
@@ -307,11 +243,8 @@ class ChromaHybridStore:
         combined_results = []
         for sem_result in semantic_results:
             content_key = sem_result["text"][:100]
-
-            # Start with semantic score
             combined_score = semantic_weight * sem_result["semantic_score"]
 
-            # Add BM25 score if available
             if content_key in bm25_lookup:
                 combined_score += bm25_weight * bm25_lookup[content_key]["bm25_score"]
 
@@ -323,11 +256,9 @@ class ChromaHybridStore:
                 "semantic_score": sem_result["semantic_score"],
             })
 
-        # Sort by combined score and return top_k
         combined_results.sort(key=lambda x: x["score"], reverse=True)
         results = combined_results[:top_k]
 
-        # Log search quality
         if results:
             avg_score = sum(r["score"] for r in results) / len(results)
             logger.debug("Search completed", avg_score=f"{avg_score:.3f}", top_score=f"{results[0]['score']:.3f}")
@@ -344,12 +275,6 @@ class ChromaHybridStore:
         """
         Advanced ensemble search with query expansion and RRF.
 
-        This method:
-        1. Expands the query with related terms (acronyms, synonyms)
-        2. Generates multiple query variants
-        3. Searches with each variant
-        4. Combines results using Reciprocal Rank Fusion (RRF)
-
         Args:
             query_text: Query text
             top_k: Number of results to return
@@ -364,7 +289,6 @@ class ChromaHybridStore:
             return []
 
         embedder = get_embedder()
-        collection = self.client.get_collection(self.collection_name)
         retrieval_k = min(top_k * 3, self.count()) if self.count() > 0 else top_k
 
         # Generate query variants
@@ -381,8 +305,8 @@ class ChromaHybridStore:
         for variant_query in query_variants:
             query_embedding = embedder.embed_query(variant_query)
 
-            chroma_results = collection.query(
-                query_embeddings=[query_embedding],
+            chroma_results = self.collection.query(
+                query_embeddings=[query_embedding.tolist()],
                 n_results=retrieval_k,
                 where=self._build_where_clause(filters) if filters else None,
                 include=["documents", "metadatas", "distances"]
@@ -398,25 +322,25 @@ class ChromaHybridStore:
                     all_results.append({
                         "text": doc,
                         "meta": meta,
-                        "score": similarity,  # Will be replaced by RRF score
+                        "score": similarity,
                         "query_used": variant_query,
                     })
 
         # If BM25 is available, add BM25 results to ensemble
-        if self.bm25_retriever and all_results:
-            self.bm25_retriever.k = retrieval_k
+        if self._bm25 and self._doc_texts and all_results:
             try:
-                # Use the original query for BM25 (works better with exact terms)
-                bm25_docs = self.bm25_retriever.invoke(query_text)
-                bm25_results = []
-                for i, doc in enumerate(bm25_docs):
-                    bm25_results.append({
-                        "text": doc.page_content,
-                        "meta": doc.metadata,
-                        "score": 1.0 - (i / len(bm25_docs)),  # Normalized rank score
-                        "query_used": "bm25",
-                    })
-                all_results.extend(bm25_results)
+                tokenized_query = _tokenize(query_text)
+                bm25_scores = self._bm25.get_scores(tokenized_query)
+                top_indices = np.argsort(bm25_scores)[::-1][:retrieval_k]
+
+                for rank, idx in enumerate(top_indices):
+                    if bm25_scores[idx] > 0:
+                        all_results.append({
+                            "text": self._doc_texts[idx],
+                            "meta": self._doc_metas[idx] if idx < len(self._doc_metas) else {},
+                            "score": 1.0 - (rank / len(top_indices)),
+                            "query_used": "bm25",
+                        })
             except Exception as e:
                 logger.warning("BM25 retrieval failed in ensemble", error=str(e))
 
@@ -426,7 +350,6 @@ class ChromaHybridStore:
 
         rrf_results = reciprocal_rank_fusion([all_results], k=60, top_k=top_k)
 
-        # Log ensemble results
         if rrf_results:
             logger.info(
                 "Ensemble search completed",
@@ -437,54 +360,26 @@ class ChromaHybridStore:
 
         return rrf_results
 
-    def get_ensemble_retriever(
-        self,
-        top_k: int = 5,
-        semantic_weight: float = 0.7,
-        bm25_weight: float = 0.3,
-    ):
-        """
-        Get a retriever for hybrid search.
-
-        Note: Returns semantic retriever only as EnsembleRetriever is not available.
-        Use the search() method for true hybrid search (semantic + BM25).
-
-        Args:
-            top_k: Number of results to return
-            semantic_weight: Weight for semantic retriever (not used)
-            bm25_weight: Weight for BM25 retriever (not used)
-
-        Returns:
-            LangChain retriever object (semantic only)
-        """
-        logger.warning(
-            "get_ensemble_retriever() returns semantic-only retriever. "
-            "Use search() method for hybrid search (semantic + BM25)."
-        )
-        return self.vectorstore.as_retriever(search_kwargs={"k": top_k})
-
     def count(self) -> int:
         """Get total number of documents in the collection."""
-        return self.vectorstore._collection.count()
+        return self.collection.count()
 
     def reset(self) -> None:
         """Delete all documents from the collection."""
-        # Delete the collection via the client
         try:
             self.client.delete_collection(self.collection_name)
             # Recreate the collection
-            self.vectorstore = Chroma(
-                client=self.client,
-                collection_name=self.collection_name,
-                embedding_function=self.langchain_embeddings,
-                collection_metadata={
+            self.collection = self.client.get_or_create_collection(
+                name=self.collection_name,
+                metadata={
                     "hnsw:space": "cosine",
                     "hnsw:construction_ef": 200,
                     "hnsw:M": 16,
                 },
             )
-            self._documents = []
-            self.bm25_retriever = None
+            self._doc_texts = []
+            self._doc_metas = []
+            self._bm25 = None
             logger.info("Reset ChromaHybridStore")
         except Exception as e:
             logger.error("Failed to reset ChromaHybridStore", error=str(e))
@@ -492,6 +387,7 @@ class ChromaHybridStore:
     def delete_collection(self) -> None:
         """Permanently delete the collection."""
         self.client.delete_collection(self.collection_name)
-        self._documents = []
-        self.bm25_retriever = None
+        self._doc_texts = []
+        self._doc_metas = []
+        self._bm25 = None
         logger.info("Deleted collection", name=self.collection_name)

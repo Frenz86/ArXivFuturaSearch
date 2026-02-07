@@ -10,12 +10,18 @@ Includes models for:
 """
 
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Table, Text, Integer, JSON as JSONType, Float, LargeBinary
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
-from datetime import datetime
+from sqlalchemy.orm import DeclarativeBase, relationship
+from datetime import datetime, UTC
 import uuid
 
-Base = declarative_base()
+
+def _utcnow():
+    return datetime.now(UTC)
+
+
+class Base(DeclarativeBase):
+    pass
+
 
 # =============================================================================
 # AUTH & RBAC MODELS
@@ -27,7 +33,7 @@ user_roles = Table(
     Base.metadata,
     Column('user_id', String(36), ForeignKey('users.id'), primary_key=True),
     Column('role_id', String(36), ForeignKey('roles.id'), primary_key=True),
-    Column('assigned_at', DateTime, default=datetime.utcnow),
+    Column('assigned_at', DateTime, default=_utcnow),
     Column('assigned_by', String(36)),
 )
 
@@ -50,8 +56,8 @@ class User(Base):
     name = Column(String(255))
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Relationships
     roles = relationship("Role", secondary=user_roles, back_populates="users")
@@ -74,7 +80,7 @@ class Role(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(50), unique=True, nullable=False)  # 'admin', 'user', 'guest'
     description = Column(String(255))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     # Relationships
     users = relationship("User", secondary=user_roles, back_populates="roles")
@@ -93,7 +99,7 @@ class Permission(Base):
     resource = Column(String(50), nullable=False)  # 'search', 'index', 'admin'
     action = Column(String(50), nullable=False)    # 'read', 'write', 'delete'
     description = Column(String(255))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     # Relationships
     roles = relationship("Role", secondary=role_permissions, back_populates="permissions")
@@ -112,7 +118,7 @@ class UserSession(Base):
     ip_address = Column(String(45))  # IPv6 compatible
     user_agent = Column(String(500))
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     revoked_at = Column(DateTime, nullable=True)
 
     # Relationship
@@ -135,7 +141,7 @@ class AuditLog(Base):
     ip_address = Column(String(45))
     user_agent = Column(String(500))
     status = Column(String(20), nullable=False)  # 'success', 'failure'
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
 
     # Relationship
     user = relationship("User", back_populates="audit_logs")
@@ -157,8 +163,8 @@ class Conversation(Base):
     title = Column(String(500))
     context_summary = Column(Text)
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Relationships
     user = relationship("User", back_populates="conversations")
@@ -177,7 +183,7 @@ class ChatMessage(Base):
     role = Column(String(20), nullable=False)  # 'user', 'assistant', 'system'
     content = Column(Text, nullable=False)
     token_count = Column(Integer)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     # Relationship
     conversation = relationship("Conversation", back_populates="messages")
@@ -199,7 +205,7 @@ class SavedSearch(Base):
     name = Column(String(255), nullable=False)
     query = Column(Text)  # Search query
     filters = Column(JSONType)  # JSON encoded filters
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     last_used = Column(DateTime)
 
     # Relationship
@@ -219,8 +225,8 @@ class Collection(Base):
     description = Column(Text)
     is_public = Column(Boolean, default=False)
     share_token = Column(String(64), unique=True)  # For sharing links
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Relationships
     user = relationship("User", back_populates="collections")
@@ -238,7 +244,7 @@ class CollectionPaper(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     collection_id = Column(String(36), ForeignKey('collections.id'), nullable=False, index=True)
     paper_id = Column(String(100))  # ArXiv ID
-    added_at = Column(DateTime, default=datetime.utcnow)
+    added_at = Column(DateTime, default=_utcnow)
     order_index = Column(Integer, default=0)  # For custom ordering
     notes = Column(Text)  # User notes for this paper in collection
 
@@ -260,8 +266,8 @@ class Annotation(Base):
     annotation_type = Column(String(50))  # "note", "highlight", "question"
     content = Column(Text, nullable=False)
     position = Column(JSONType)  # JSON: {"page": 1, "text": "...", "offset": 100}
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Relationships
     user = relationship("User", back_populates="annotations")
@@ -290,8 +296,8 @@ class Alert(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     last_triggered = Column(DateTime)
     trigger_count = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Relationship
     user = relationship("User", back_populates="alerts")

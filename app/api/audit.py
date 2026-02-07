@@ -6,7 +6,7 @@ Admin-only access for most operations.
 """
 
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,11 +104,11 @@ async def export_audit_logs(
     if format == "json":
         content = await exporter.to_json(logs)
         media_type = "application/json"
-        filename = f"audit_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+        filename = f"audit_logs_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json"
     else:  # csv
         content = await exporter.to_csv(logs)
         media_type = "text/csv"
-        filename = f"audit_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        filename = f"audit_logs_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv"
 
     return Response(
         content=content,

@@ -1,0 +1,7 @@
+# Ignore generated test results
+*.log
+results/
+*.html
+
+# Ignore Locust cache
+.locust_cache/

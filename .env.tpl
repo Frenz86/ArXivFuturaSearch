@@ -4,8 +4,10 @@
 # LLM Mode: "openrouter" (default), "ollama", or "mock"
 LLM_MODE=openrouter
 
+POSTGRES_PASSWORD=op://ArXivFuturaSearch/POSTGRES_PASSWORD/password
+
 # OpenRouter API Key (get yours at https://openrouter.ai/keys)
-OPENROUTER_API_KEY=op://ArXivFuturaSearch/env/OPENROUTER_API_KEY
+OPENROUTER_API_KEY=op://ArXivFuturaSearch/OPENROUTER_API_KEY/password
 
 # OpenRouter Model (see https://openrouter.ai/models for options)
 # Popular choices:

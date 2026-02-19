@@ -13,3 +13,11 @@ per ricreare
 .env
 op inject -i .env.tpl -o .env
 
+##############################
+## sequenza:
+
+.\run-env.ps1
+
+
+## cancellare ####
+op vault delete ArXivFuturaSearch

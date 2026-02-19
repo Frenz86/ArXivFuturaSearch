@@ -1,13 +1,14 @@
-# ArXiv RAG Copilot Configuration
+﻿# ArXiv RAG Copilot Configuration
 # Copy this to .env and fill in your values
 
 # LLM Mode: "openrouter" (default), "ollama", or "mock"
 LLM_MODE=openrouter
 
+POSTGRES_USER=op://ArXivFuturaSearch/POSTGRES_USER/username
 POSTGRES_PASSWORD=op://ArXivFuturaSearch/POSTGRES_PASSWORD/password
 
 # OpenRouter API Key (get yours at https://openrouter.ai/keys)
-OPENROUTER_API_KEY=op://ArXivFuturaSearch/OPENROUTER_API_KEY/password
+OPENROUTER_API_KEY=op://ArXivFuturaSearch/OPENROUTER_API_KEY/api-key
 
 # OpenRouter Model (see https://openrouter.ai/models for options)
 # Popular choices:

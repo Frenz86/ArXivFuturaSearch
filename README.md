@@ -276,6 +276,37 @@ cp .env.example .env
 nano .env
 ```
 
+### Using 1Password Service Account (optional)
+
+If you created a Service Account token with `run-env.sh`, you can use it locally to avoid interactive `op signin`.
+
+- Bash (session):
+```bash
+export OP_SERVICE_ACCOUNT_TOKEN='PASTE_TOKEN_HERE'
+```
+
+- PowerShell (session):
+```powershell
+$env:OP_SERVICE_ACCOUNT_TOKEN='PASTE_TOKEN_HERE'
+```
+
+- PowerShell (persist for user):
+```powershell
+[Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN','PASTE_TOKEN_HERE','User')
+```
+
+- Quick test (resolves `op://` refs in `.env.tpl`):
+```bash
+op run --env-file=.env.tpl -- echo OK
+op run --env-file=.env.tpl -- env   # inspect resolved env
+```
+
+Notes:
+- `op` CLI must be installed where you run these commands.
+- Service Accounts are read-only: they can read secrets but cannot create vaults or write items.
+- If you lost the token shown at creation, regenerate/create a new one in the 1Password Admin Console.
+
+
 **Minimum required configuration:**
 
 ```env

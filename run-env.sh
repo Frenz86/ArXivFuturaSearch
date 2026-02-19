@@ -1,36 +1,86 @@
 #!/bin/bash
 
+# =============================================================================
+# run-env.sh — Setup segreti in 1Password + genera .env.tpl
+#
+# Questo script RICHIEDE login interattivo (op signin) perche' deve SCRIVERE
+# nel vault. Il Service Account (read-only) serve solo per l'uso quotidiano
+# con "op run".
+# =============================================================================
+
 # Pattern per riconoscere i segreti (case-insensitive match sul nome variabile)
-SECRET_PATTERNS="KEY|PASSWORD|SECRET|TOKEN|CREDENTIAL"
+SECRET_PATTERNS="KEY|PASSWORD|SECRET|TOKEN|CREDENTIAL|USER"
 
-# Check siamo in una repo git
+# Determina il nome del campo 1Password in base al tipo di segreto
+field_name_for() {
+  local var="$1"
+  case "$var" in
+    *API_KEY*|*APIKEY*)  echo "api-key" ;;
+    *SECRET_KEY*|*SECRET*)  echo "secret" ;;
+    *PASSWORD*|*PASSWD*)  echo "password" ;;
+    *TOKEN*)  echo "token" ;;
+    *CREDENTIAL*)  echo "credential" ;;
+    *USER*|*USERNAME*)  echo "username" ;;
+    *)  echo "password" ;;
+  esac
+}
+
+# --- Prerequisiti ---
 if ! git rev-parse --is-inside-work-tree &> /dev/null; then
-  echo "❌ Non sei dentro una repo git."
+  echo "Non sei dentro una repo git."
   exit 1
 fi
 
-# Check op installato
 if ! command -v op &> /dev/null; then
-  echo "❌ 1Password CLI non installato. Installalo da https://developer.1password.com/docs/cli"
+  echo "1Password CLI non installato. Installalo da https://developer.1password.com/docs/cli"
   exit 1
 fi
 
-# Check op autenticato
-if ! op account list &> /dev/null; then
-  echo "❌ Non sei autenticato a 1Password. Esegui: op signin"
+if [ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
+  echo "Questo script richiede login interattivo (non Service Account)."
+  echo "Rimuovi il token e usa op signin:"
+  echo "  unset OP_SERVICE_ACCOUNT_TOKEN"
+  echo "  op signin"
+  echo "  bash run-env.sh"
   exit 1
 fi
+
+if ! op account list &> /dev/null; then
+  echo "Non sei autenticato a 1Password. Esegui: op signin"
+  exit 1
+fi
+echo "Autenticato con sessione interattiva"
 
 REPO_URL=$(git remote get-url origin)
 REPO_NAME=$(basename "$REPO_URL" .git)
 
-# Check .env esiste
 if [ ! -f .env ]; then
-  echo "❌ .env non trovato nella repo"
+  echo ".env non trovato nella repo"
   exit 1
 fi
 
-# Separa segreti da config
+# --- Crea o trova il vault ---
+VAULT_ID=$(op vault get "$REPO_NAME" --format=json 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+if [ -z "$VAULT_ID" ]; then
+  echo "Creazione vault '$REPO_NAME'..."
+  VAULT_JSON=$(op vault create "$REPO_NAME" --format=json 2>&1)
+  if [ $? -ne 0 ]; then
+    echo "Impossibile creare il vault:"
+    echo "  $VAULT_JSON"
+    exit 1
+  fi
+  VAULT_ID=$(echo "$VAULT_JSON" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+  if [ -z "$VAULT_ID" ]; then
+    echo "Impossibile estrarre ID del vault:"
+    echo "  $VAULT_JSON"
+    exit 1
+  fi
+fi
+echo "Vault: $REPO_NAME ($VAULT_ID)"
+
+# --- Salva segreti nel vault ---
 SECRET_NAMES=()
 SECRET_VALUES=()
 SECRETS_COUNT=0
@@ -48,34 +98,32 @@ while IFS= read -r line; do
 done < .env
 
 if [ "$SECRETS_COUNT" -eq 0 ]; then
-  echo "⚠️  Nessun segreto trovato nel .env (pattern: $SECRET_PATTERNS)"
-  echo "   Il .env.tpl conterrà solo valori in chiaro."
+  echo "Nessun segreto trovato nel .env (pattern: $SECRET_PATTERNS)"
+  echo "Il .env.tpl conterra' solo valori in chiaro."
 else
-  # Crea il vault (ignora errore se esiste già)
-  op vault create "$REPO_NAME" 2>/dev/null
-
-  # Crea un item separato per ogni segreto
   for i in "${!SECRET_NAMES[@]}"; do
     NAME="${SECRET_NAMES[$i]}"
     VALUE="${SECRET_VALUES[$i]}"
 
-    op item delete "$NAME" --vault "$REPO_NAME" 2>/dev/null
+    # Elimina item esistente (ignora errore se non esiste)
+    op item delete "$NAME" --vault "$VAULT_ID" 2>/dev/null || true
+
+    FIELD=$(field_name_for "$NAME")
     op item create \
-      --vault "$REPO_NAME" \
+      --vault "$VAULT_ID" \
       --category "Password" \
       --title "$NAME" \
-      "password=$VALUE"
+      "$FIELD=$VALUE"
 
-    echo "  🔑 $NAME"
+    echo "  -> $NAME"
   done
 
-  echo "🔐 $SECRETS_COUNT segreti salvati in 1Password (vault: $REPO_NAME)"
+  echo "$SECRETS_COUNT segreti salvati in 1Password (vault: $REPO_NAME)"
 fi
 
-# Genera .env.tpl: segreti → op://, config → valore in chiaro
+# --- Genera .env.tpl ---
 > .env.tpl
 while IFS= read -r line; do
-  # Preserva commenti e righe vuote
   if [[ "$line" =~ ^#.*$ || -z "$line" ]]; then
     echo "$line" >> .env.tpl
     continue
@@ -85,7 +133,8 @@ while IFS= read -r line; do
   VAR_VALUE=$(echo "$line" | cut -d'=' -f2-)
 
   if echo "$VAR_NAME" | grep -qiE "$SECRET_PATTERNS"; then
-    echo "$VAR_NAME=op://$REPO_NAME/$VAR_NAME/password" >> .env.tpl
+    FIELD=$(field_name_for "$VAR_NAME")
+    echo "$VAR_NAME=op://$REPO_NAME/$VAR_NAME/$FIELD" >> .env.tpl
   else
     echo "$VAR_NAME=$VAR_VALUE" >> .env.tpl
   fi
@@ -96,5 +145,65 @@ if ! grep -q "^\.env$" .gitignore 2>/dev/null; then
   echo ".env" >> .gitignore
 fi
 
-echo "✅ Done! $SECRETS_COUNT segreti salvati in 1Password, .env.tpl generato."
-echo "   Per usarlo: op run --env-file=.env.tpl -- uv run uvicorn app.main:app --port 8000 --reload"
+echo ""
+echo "Done! $SECRETS_COUNT segreti salvati in 1Password, .env.tpl generato."
+
+# --- Offri creazione Service Account ---
+SA_NAME="${REPO_NAME}-sa"
+
+echo ""
+echo "Vuoi creare un Service Account '$SA_NAME' per evitare op signin in futuro? (y/N)"
+read -r CREATE_SA
+
+if [[ "$CREATE_SA" =~ ^[Yy]$ ]]; then
+  echo "Creazione Service Account '$SA_NAME'..."
+  SA_TOKEN_RAW=$(op service-account create "$SA_NAME" \
+    --vault "${VAULT_ID}:read_items" \
+    2>&1)
+  SA_EXIT=$?
+
+  if [ $SA_EXIT -eq 0 ]; then
+    echo ""
+    echo "Service Account creato!"
+    echo ""
+    echo "SALVA QUESTO TOKEN ORA - non sara' piu' visibile."
+
+    # Extract token string
+    SA_TOKEN=$(printf "%s" "$SA_TOKEN_RAW" | grep -oE '(ops_|sa_)[A-Za-z0-9._-]+' | head -1)
+
+    if [ -n "$SA_TOKEN" ]; then
+      # Persist token for Windows (PowerShell) if available
+      if command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', '$SA_TOKEN', 'User')" >/dev/null 2>&1 \
+          && echo "OP_SERVICE_ACCOUNT_TOKEN impostata a livello User (Windows). Apri una nuova shell." \
+          || echo "Impossibile impostare la variabile utente su Windows via PowerShell."
+      else
+        # Persist for POSIX shells
+        PROFILE_FILE="$HOME/.profile"
+        if [ -w "$PROFILE_FILE" ] || [ ! -e "$PROFILE_FILE" ]; then
+          printf "\n# 1Password Service Account token\nexport OP_SERVICE_ACCOUNT_TOKEN='%s'\n" "$SA_TOKEN" >> "$PROFILE_FILE"
+          echo "OP_SERVICE_ACCOUNT_TOKEN aggiunta a $PROFILE_FILE. Apri una nuova shell."
+        else
+          echo "Non ho i permessi per scrivere $PROFILE_FILE."
+        fi
+      fi
+
+      echo ""
+      echo "Token: $SA_TOKEN"
+    else
+      echo "Non sono riuscito ad estrarre il token. Output completo:"
+      echo ""
+      echo "$SA_TOKEN_RAW"
+      echo ""
+      echo "Copia il token e impostalo manualmente:"
+      echo "  PowerShell: [Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN','PASTE_TOKEN','User')"
+    fi
+  else
+    echo "Errore nella creazione del Service Account:"
+    echo "  $SA_TOKEN_RAW"
+  fi
+fi
+
+echo ""
+echo "Per avviare l'app:"
+echo "  op run --env-file=.env.tpl -- uv run uvicorn app.main:app --port 8000 --reload"

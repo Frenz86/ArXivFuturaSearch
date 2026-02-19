@@ -3,3 +3,13 @@ uv sync
 .venv\Scripts\activate
 
 uv run uvicorn app.main:app --port 8000 --reload
+
+op signin
+
+op run --env-file=.env.tpl -- uv run uvicorn app.main:app --port 8000 --reload
+
+
+per ricreare 
+.env
+op inject -i .env.tpl -o .env
+

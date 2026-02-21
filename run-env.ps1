@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Setup segreti in 1Password + genera .env.tpl
 .DESCRIPTION
@@ -30,7 +30,7 @@ function Get-FieldName {
 }
 
 # --- Prerequisiti ---
-$gitCheck = git rev-parse --is-inside-work-tree 2>$null
+$null = git rev-parse --is-inside-work-tree 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Non sei dentro una repo git." -ForegroundColor Red
     exit 1
@@ -50,7 +50,7 @@ if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
     exit 1
 }
 
-$accountCheck = op account list 2>$null
+$null = op account list 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Non sei autenticato a 1Password. Esegui: op signin" -ForegroundColor Red
     exit 1
@@ -156,10 +156,13 @@ foreach ($line in Get-Content .env) {
         $tplLines += "$varName=op://$REPO_NAME/$varName/$tField"
     }
     else {
-        $tplLines += $line
+        # Strip inline comments so they don't become part of the variable value
+        $cleanValue = ($varValue -split '\s+#')[0]
+        $tplLines += "$varName=$cleanValue"
     }
 }
-$tplLines | Set-Content -Path .env.tpl -Encoding UTF8
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllLines((Join-Path (Get-Location).Path '.env.tpl'), $tplLines, $utf8NoBom)
 
 # Aggiunge .env al .gitignore
 if (Test-Path .gitignore) {
@@ -176,10 +179,25 @@ Write-Host ""
 Write-Host "Done! $SECRETS_COUNT segreti salvati in 1Password, .env.tpl generato." -ForegroundColor Green
 
 # --- Offri creazione Service Account ---
-$SA_NAME = "$REPO_NAME-sa"
+$SA_NAME = "Futura-Dev"
+
+# Controlla se il SA esiste già: la variabile User-level persiste anche se
+# nella sessione corrente è stata azzerata con $env:OP_SERVICE_ACCOUNT_TOKEN = $null
+$existingSA = [bool][Environment]::GetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', 'User')
+
+if ($existingSA) {
+    Write-Host ""
+    Write-Host "Service Account '$SA_NAME' trovato." -ForegroundColor Cyan
+    Write-Host "Aggiungi il vault '$REPO_NAME' dal portale 1Password:" -ForegroundColor Yellow
+    Write-Host "  1password.com -> Service Accounts -> $SA_NAME -> Vaults -> Add vault -> $REPO_NAME" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "Per resettare il token:" -ForegroundColor DarkGray
+    Write-Host "  [Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', `$null, 'User')" -ForegroundColor DarkGray
+}
+else {
 
 Write-Host ""
-$createSA = Read-Host "Vuoi creare un Service Account '$SA_NAME' per evitare op signin in futuro? (y/N)"
+$createSA = Read-Host "Vuoi creare il Service Account '$SA_NAME' per evitare op signin in futuro? (y/N)"
 
 if ($createSA -match '^[Yy]$') {
     Write-Host "Creazione Service Account '$SA_NAME'..." -ForegroundColor Cyan
@@ -222,7 +240,8 @@ if ($createSA -match '^[Yy]$') {
         Write-Host $saString
     }
 }
+} # end: SA non esistente
 
 Write-Host ""
-Write-Host "Per avviare l'app:"
+Write-Host 'Per avviare l''app:'
 Write-Host "  op run --env-file=.env.tpl -- uv run uvicorn app.main:app --port 8000 --reload"

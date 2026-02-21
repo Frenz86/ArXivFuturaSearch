@@ -14,8 +14,9 @@ per ricreare
 op inject -i .env.tpl -o .env
 
 ##############################
-## sequenza:
-
+## SEQUENZA!!!!!!!!:
+$env:OP_SERVICE_ACCOUNT_TOKEN = $null
+op signin
 .\run-env.ps1
 
 

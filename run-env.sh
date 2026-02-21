@@ -136,7 +136,9 @@ while IFS= read -r line; do
     FIELD=$(field_name_for "$VAR_NAME")
     echo "$VAR_NAME=op://$REPO_NAME/$VAR_NAME/$FIELD" >> .env.tpl
   else
-    echo "$VAR_NAME=$VAR_VALUE" >> .env.tpl
+    # Strip inline comments so they don't become part of the variable value
+    CLEAN_VALUE=$(echo "$VAR_VALUE" | sed 's/[[:space:]]*#.*$//')
+    echo "$VAR_NAME=$CLEAN_VALUE" >> .env.tpl
   fi
 done < .env
 
@@ -149,10 +151,34 @@ echo ""
 echo "Done! $SECRETS_COUNT segreti salvati in 1Password, .env.tpl generato."
 
 # --- Offri creazione Service Account ---
-SA_NAME="${REPO_NAME}-sa"
+SA_NAME="Futura-Dev"
 
+# Controlla se il SA esiste già:
+# - Windows: legge OP_SERVICE_ACCOUNT_TOKEN a livello User dal registro
+# - Linux/macOS: cerca la riga in ~/.profile
+EXISTING_TOKEN=""
+if command -v powershell.exe >/dev/null 2>&1; then
+  EXISTING_TOKEN=$(powershell.exe -NoProfile -Command \
+    "[Environment]::GetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', 'User')" 2>/dev/null | tr -d '\r')
+else
+  grep -q "OP_SERVICE_ACCOUNT_TOKEN" "$HOME/.profile" 2>/dev/null && EXISTING_TOKEN="found"
+fi
+
+if [ -n "$EXISTING_TOKEN" ]; then
+  echo ""
+  echo "Service Account '$SA_NAME' trovato."
+  echo "Aggiungi il vault '$REPO_NAME' dal portale 1Password:"
+  echo "  1password.com -> Service Accounts -> $SA_NAME -> Vaults -> Add vault -> $REPO_NAME"
+  echo ""
+  if command -v powershell.exe >/dev/null 2>&1; then
+    echo "Per resettare il token:"
+    echo "  [Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', \$null, 'User')"
+  else
+    echo "Per resettare il token: rimuovi la riga OP_SERVICE_ACCOUNT_TOKEN da ~/.profile."
+  fi
+else
 echo ""
-echo "Vuoi creare un Service Account '$SA_NAME' per evitare op signin in futuro? (y/N)"
+echo "Vuoi creare il Service Account '$SA_NAME' per evitare op signin in futuro? (y/N)"
 read -r CREATE_SA
 
 if [[ "$CREATE_SA" =~ ^[Yy]$ ]]; then
@@ -203,6 +229,7 @@ if [[ "$CREATE_SA" =~ ^[Yy]$ ]]; then
     echo "  $SA_TOKEN_RAW"
   fi
 fi
+fi  # end: SA non esistente
 
 echo ""
 echo "Per avviare l'app:"

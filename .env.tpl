@@ -1,4 +1,4 @@
-﻿# ArXiv RAG Copilot Configuration
+# ArXiv RAG Copilot Configuration
 # Copy this to .env and fill in your values
 
 # LLM Mode: "openrouter" (default), "ollama", or "mock"
@@ -47,4 +47,4 @@ OLLAMA_MODEL=llama3.1
 
 # Logging
 LOG_LEVEL=INFO
-LOG_FORMAT=console  # "json" for production, "console" for development
+LOG_FORMAT=console

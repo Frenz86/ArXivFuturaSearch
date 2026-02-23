@@ -1,24 +1,66 @@
-uv sync
+##############################
+# SETUP INIZIALE (prima volta o dopo reset account)
+##############################
 
-.venv\Scripts\activate
+op account forget --all
+op account add
 
-uv run uvicorn app.main:app --port 8000 --reload
+Sign-in address (es. my.1password.eu)
+Email dev.futuraai@gmail.com
+Secret Key
+Master Password
 
-op signin
+Invoke-Expression $(op signin)
 
-op run --env-file=.env.tpl -- uv run uvicorn app.main:app --port 8000 --reload
+op account list
 
-
-per ricreare 
-.env
-op inject -i .env.tpl -o .env
 
 ##############################
-## SEQUENZA!!!!!!!!:
-$env:OP_SERVICE_ACCOUNT_TOKEN = $null
-op signin
+# SEQUENZA NORMALE (uso quotidiano)
+##############################
+
+Invoke-Expression $(op signin)
 .\run-env.ps1
 
 
-## cancellare ####
-op vault delete ArXivFuturaSearch
+##############################
+# SE IL SERVICE ACCOUNT E' STATO ELIMINATO
+# (sintomo: "Modalita: Service Account" + errore 403)
+##############################
+
+# 1. Rimuovi il token vecchio dal registro Windows (non serve admin)
+reg delete "HKCU\Environment" /v OP_SERVICE_ACCOUNT_TOKEN /f
+
+# 2. Rimuovi dalla sessione corrente
+Remove-Item Env:OP_SERVICE_ACCOUNT_TOKEN -ErrorAction SilentlyContinue
+
+# 3. Verifica che sia sparito (deve restituire nulla)
+$env:OP_SERVICE_ACCOUNT_TOKEN
+
+# 4. Vai su 1password.com → Settings → Developer → Service Accounts
+#    Crea nuovo SA, dagli accesso a FuturaDev e ArXivFuturaSearch
+#    Poi salva il nuovo token in modo permanente:
+[Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', 'ops_<nuovo_token>', 'User')
+
+# Oppure se vuoi procedere in modalita interattiva senza SA:
+Invoke-Expression $(op signin)
+.\run-env.ps1
+
+
+##############################
+# DIAGNOSTICA
+##############################
+
+# Verifica vault disponibili
+op vault list
+
+# Verifica dove e' impostato il token SA
+[Environment]::GetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', 'User')
+[Environment]::GetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', 'Machine')
+
+
+##############################
+## NON FARE MAI!!!!!!!!!!!
+##############################
+# op vault delete ArXivFuturaSearch
+# op vault delete 1Password-settings

@@ -1,16 +1,22 @@
-﻿<#
+<#
 .SYNOPSIS
     Setup segreti in 1Password + genera .env.tpl
+
 .DESCRIPTION
-    Questo script RICHIEDE login interattivo (op signin) perche' deve SCRIVERE
-    nel vault. Il Service Account (read-only) serve solo per l'uso quotidiano
-    con "op run".
+    Modalita SA          : imposta OP_SERVICE_ACCOUNT_TOKEN prima di eseguire
+    Modalita interattiva : op signin, poi .\run-env-v2.ps1
+
+    Il vault non viene ricreato se esiste gia (riesecuzione sicura).
 #>
 
 $ErrorActionPreference = "Stop"
 
-# Pattern per riconoscere i segreti
-$SECRET_PATTERNS = "KEY|PASSWORD|SECRET|TOKEN|CREDENTIAL|USER"
+$SECRET_PATTERNS     = "KEY|PASSWORD|SECRET|TOKEN|CREDENTIAL|USER"
+$SA_NAME             = "Futura-Dev"
+$ADMIN_EMAIL         = "administration@futuraaigroup.com"
+$DEV_EMAIL           = "dev.futuraai@gmail.com"
+$BOOTSTRAPPED_TOKEN  = $false
+$saTokenFromVault    = $null
 
 function Get-FieldName {
     param([string]$var)
@@ -32,81 +38,197 @@ function Get-FieldName {
 # --- Prerequisiti ---
 $null = git rev-parse --is-inside-work-tree 2>$null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "Non sei dentro una repo git." -ForegroundColor Red
-    exit 1
+    Write-Host "Non sei dentro una repo git." -ForegroundColor Red; exit 1
 }
 
 if (-not (Get-Command op -ErrorAction SilentlyContinue)) {
-    Write-Host "1Password CLI non installato. Installalo da https://developer.1password.com/docs/cli" -ForegroundColor Red
-    exit 1
+    Write-Host "1Password CLI non installato. Installalo da https://developer.1password.com/docs/cli" -ForegroundColor Red; exit 1
 }
 
+# --- Rilevamento modalita: SA o interattiva ---
 if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
-    Write-Host "Questo script richiede login interattivo (non Service Account)." -ForegroundColor Yellow
-    Write-Host "Rimuovi il token e usa op signin:"
-    Write-Host '  $env:OP_SERVICE_ACCOUNT_TOKEN = $null'
-    Write-Host "  op signin"
-    Write-Host "  .\run-env.ps1"
-    exit 1
+    $MODE = "sa"
+    Write-Host "Modalita: Service Account" -ForegroundColor Cyan
+} else {
+    $null = op account list 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "OP_SERVICE_ACCOUNT_TOKEN non impostato e nessun login attivo." -ForegroundColor Red
+        Write-Host "Esegui: op signin"
+        exit 1
+    }
+
+    Write-Host "OP_SERVICE_ACCOUNT_TOKEN non impostato. Recupero dal vault FuturaDev..." -ForegroundColor Cyan
+    $ErrorActionPreference = "Continue"
+    $saTokenFromVault = op read "op://FuturaDev/OP-SA-Token/credential" 2>$null
+    $ErrorActionPreference = "Stop"
+
+    if ($saTokenFromVault) {
+        $MODE = "sa"
+        $BOOTSTRAPPED_TOKEN = $true
+        Write-Host "Token SA recuperato. Modalita: Service Account (account: $DEV_EMAIL)" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "Per non ripetere op signin in futuro, aggiungi al tuo profilo:" -ForegroundColor Cyan
+        Write-Host "  [Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', (op read 'op://FuturaDev/OP-SA-Token/credential'), 'User')"
+    } else {
+        $MODE = "interactive"
+        Write-Host "Modalita: account interattivo (token SA non trovato nel vault FuturaDev)" -ForegroundColor Yellow
+    }
 }
 
-$null = op account list 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Non sei autenticato a 1Password. Esegui: op signin" -ForegroundColor Red
-    exit 1
-}
-Write-Host "Autenticato con sessione interattiva" -ForegroundColor Green
-
-$REPO_URL = git remote get-url origin
+$REPO_URL  = git remote get-url origin
 $REPO_NAME = [System.IO.Path]::GetFileNameWithoutExtension($REPO_URL)
 
 if (-not (Test-Path .env)) {
-    Write-Host ".env non trovato nella repo" -ForegroundColor Red
-    exit 1
+    Write-Host ".env non trovato nella repo" -ForegroundColor Red; exit 1
 }
 
 # --- Crea o trova il vault ---
 $VAULT_ID = $null
-try {
+$ErrorActionPreference = "Continue"
+if ($BOOTSTRAPPED_TOKEN) {
+    $env:OP_SERVICE_ACCOUNT_TOKEN = $saTokenFromVault
     $vaultJson = op vault get $REPO_NAME --format=json 2>$null
-    if ($vaultJson) {
-        $vaultObj = $vaultJson | ConvertFrom-Json
-        $VAULT_ID = $vaultObj.id
-    }
+    $env:OP_SERVICE_ACCOUNT_TOKEN = $null
+} else {
+    $vaultJson = op vault get $REPO_NAME --format=json 2>$null
 }
-catch {
-    $VAULT_ID = $null
+$ErrorActionPreference = "Stop"
+
+if ($vaultJson) {
+    try { $VAULT_ID = ($vaultJson | ConvertFrom-Json).id } catch { $VAULT_ID = $null }
+}
+
+# Fallback: op vault get potrebbe fallire se l'account non ha accesso diretto;
+# cerca il vault per nome in op vault list
+if (-not $VAULT_ID) {
+    $ErrorActionPreference = "Continue"
+    $allVaultsJson = op vault list --format=json 2>$null
+    $ErrorActionPreference = "Stop"
+    if ($allVaultsJson) {
+        try {
+            $found = ($allVaultsJson | ConvertFrom-Json) | Where-Object { $_.name -eq $REPO_NAME } | Select-Object -First 1
+            if ($found) { $VAULT_ID = $found.id }
+        } catch {}
+    }
 }
 
 if (-not $VAULT_ID) {
     Write-Host "Creazione vault '$REPO_NAME'..." -ForegroundColor Cyan
-    $createRaw = op vault create $REPO_NAME --format=json
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Impossibile creare il vault." -ForegroundColor Red
+
+    $ErrorActionPreference = "Continue"
+    if ($BOOTSTRAPPED_TOKEN) {
+        $env:OP_SERVICE_ACCOUNT_TOKEN = $saTokenFromVault
+        $createRaw = op vault create $REPO_NAME --format=json 2>&1
+        $createExit = $LASTEXITCODE
+        $env:OP_SERVICE_ACCOUNT_TOKEN = $null
+    } else {
+        $createRaw = op vault create $REPO_NAME --format=json 2>&1
+        $createExit = $LASTEXITCODE
+    }
+    $ErrorActionPreference = "Stop"
+
+    if ($createExit -ne 0) {
+        Write-Host "Impossibile creare il vault. Errore op:" -ForegroundColor Red
+        Write-Host "$createRaw" -ForegroundColor Red
         exit 1
     }
-    $createObj = $createRaw | ConvertFrom-Json
-    $VAULT_ID = $createObj.id
+    $VAULT_ID = ($createRaw | ConvertFrom-Json).id
     if (-not $VAULT_ID) {
-        Write-Host "Impossibile estrarre ID del vault." -ForegroundColor Red
-        exit 1
+        Write-Host "Impossibile estrarre ID del vault." -ForegroundColor Red; exit 1
+    }
+    $VAULT_JUST_CREATED = $true
+    Write-Host "Vault '$REPO_NAME' creato ($VAULT_ID)" -ForegroundColor Green
+
+    if ($BOOTSTRAPPED_TOKEN) {
+        $ErrorActionPreference = "Continue"
+
+        $env:OP_SERVICE_ACCOUNT_TOKEN = $saTokenFromVault
+        $shareDevOut = op vault user grant --vault $VAULT_ID --user $DEV_EMAIL --permissions "allow_viewing,allow_editing,allow_managing" 2>&1
+        $shareDevExit = $LASTEXITCODE
+        $env:OP_SERVICE_ACCOUNT_TOKEN = $null
+        if ($shareDevExit -eq 0) {
+            Write-Host "Vault condiviso con il tuo account ($DEV_EMAIL)." -ForegroundColor Green
+        } else {
+            Write-Host "ATTENZIONE: impossibile condividere con ${DEV_EMAIL}: $shareDevOut" -ForegroundColor Yellow
+            Write-Host "  Chiedi all'admin di eseguire:" -ForegroundColor Yellow
+            Write-Host "  op vault user grant --vault $VAULT_ID --user $DEV_EMAIL --permissions allow_viewing,allow_editing,allow_managing"
+        }
+
+        $env:OP_SERVICE_ACCOUNT_TOKEN = $saTokenFromVault
+        $shareAdminOut = op vault user grant --vault $VAULT_ID --user $ADMIN_EMAIL --permissions "allow_viewing,allow_editing,allow_managing" 2>&1
+        $shareAdminExit = $LASTEXITCODE
+        $env:OP_SERVICE_ACCOUNT_TOKEN = $null
+        if ($shareAdminExit -eq 0) {
+            Write-Host "Vault condiviso con l'admin ($ADMIN_EMAIL)." -ForegroundColor Green
+        } else {
+            Write-Host "ATTENZIONE: impossibile condividere con ${ADMIN_EMAIL}: $shareAdminOut" -ForegroundColor Yellow
+            Write-Host "  Chiedi all'admin di eseguire:" -ForegroundColor Yellow
+            Write-Host "  op vault user grant --vault $VAULT_ID --user $ADMIN_EMAIL --permissions allow_viewing,allow_editing,allow_managing"
+        }
+
+        $ErrorActionPreference = "Stop"
+        $env:OP_SERVICE_ACCOUNT_TOKEN = $saTokenFromVault
+    }
+} else {
+    $VAULT_JUST_CREATED = $false
+    Write-Host "Vault '$REPO_NAME' gia esistente ($VAULT_ID) - skip creazione" -ForegroundColor Cyan
+
+    if ($BOOTSTRAPPED_TOKEN) {
+        $env:OP_SERVICE_ACCOUNT_TOKEN = $saTokenFromVault
     }
 }
-Write-Host "Vault: $REPO_NAME ($VAULT_ID)" -ForegroundColor Cyan
+
+# --- Condivisione vault con admin (solo in modalita interattiva pura) ---
+if ($MODE -eq "interactive") {
+    $ErrorActionPreference = "Continue"
+    $vaultUsersRaw = op vault user list $VAULT_ID --format=json 2>$null | Out-String
+    $ErrorActionPreference = "Stop"
+
+    if ($vaultUsersRaw -match [regex]::Escape($ADMIN_EMAIL)) {
+        Write-Host "Admin ($ADMIN_EMAIL) ha gia accesso al vault." -ForegroundColor Cyan
+    } else {
+        Write-Host ""
+        $shareChoice = Read-Host "Vuoi condividere il vault '$REPO_NAME' con l'admin ($ADMIN_EMAIL)? (y/N)"
+        if ($shareChoice -match '^[Yy]$') {
+            $ErrorActionPreference = "Continue"
+            $shareOutput = op vault user grant --vault $VAULT_ID --user $ADMIN_EMAIL --permissions "allow_viewing,allow_editing,allow_managing" 2>&1
+            $ErrorActionPreference = "Stop"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Vault condiviso con l'admin." -ForegroundColor Green
+            } else {
+                Write-Host "ATTENZIONE: Impossibile condividere il vault:" -ForegroundColor Yellow
+                Write-Host "  $shareOutput"
+                Write-Host "Condividilo manualmente:"
+                Write-Host "  op vault user grant --vault $VAULT_ID --user $ADMIN_EMAIL --permissions allow_viewing,allow_editing,allow_managing"
+            }
+        }
+    }
+}
+
+# --- Avviso SA (solo in modalita interattiva, solo se vault appena creato) ---
+if ($MODE -eq "interactive" -and $VAULT_JUST_CREATED) {
+    Write-Host ""
+    Write-Host "ATTENZIONE: assegna manualmente il vault al Service Account '$SA_NAME':" -ForegroundColor Yellow
+    Write-Host "  1password.com -> Service Accounts -> $SA_NAME -> Vaults -> Add vault -> $REPO_NAME"
+    Write-Host ""
+    Write-Host "Oppure riesegui con il token SA (il vault non verra ricreato):" -ForegroundColor Cyan
+    Write-Host '  $env:OP_SERVICE_ACCOUNT_TOKEN = (op read "op://FuturaDev/OP-SA-Token/credential")'
+    Write-Host "  .\run-env-v2.ps1"
+}
 
 # --- Salva segreti nel vault ---
-$secretNames = @()
+$secretNames  = @()
 $secretValues = @()
 
 foreach ($line in Get-Content .env) {
     if ($line -match '^\s*#' -or $line -match '^\s*$') { continue }
     $eqIdx = $line.IndexOf('=')
     if ($eqIdx -lt 0) { continue }
-    $varName = $line.Substring(0, $eqIdx)
+    $varName  = $line.Substring(0, $eqIdx)
     $varValue = $line.Substring($eqIdx + 1)
 
     if ($varName -match $SECRET_PATTERNS) {
-        $secretNames += $varName
+        $secretNames  += $varName
         $secretValues += $varValue
     }
 }
@@ -114,20 +236,20 @@ foreach ($line in Get-Content .env) {
 $SECRETS_COUNT = $secretNames.Count
 
 if ($SECRETS_COUNT -eq 0) {
+    Write-Host ""
     Write-Host "Nessun segreto trovato nel .env (pattern: $SECRET_PATTERNS)" -ForegroundColor Yellow
     Write-Host "Il .env.tpl conterra' solo valori in chiaro."
-}
-else {
+} else {
+    Write-Host ""
     for ($i = 0; $i -lt $secretNames.Count; $i++) {
-        $sName = $secretNames[$i]
+        $sName  = $secretNames[$i]
         $sValue = $secretValues[$i]
 
-        # Elimina item esistente (ignora errore se non esiste)
         $ErrorActionPreference = "Continue"
         op item delete $sName --vault $VAULT_ID 2>$null
         $ErrorActionPreference = "Stop"
 
-        $sField = Get-FieldName $sName
+        $sField    = Get-FieldName $sName
         $sFieldArg = "$sField=$sValue"
         op item create --vault $VAULT_ID --category "Password" --title $sName $sFieldArg
 
@@ -140,108 +262,33 @@ else {
 $tplLines = @()
 foreach ($line in Get-Content .env) {
     if ($line -match '^\s*#' -or $line -match '^\s*$') {
-        $tplLines += $line
-        continue
+        $tplLines += $line; continue
     }
     $eqIdx = $line.IndexOf('=')
-    if ($eqIdx -lt 0) {
-        $tplLines += $line
-        continue
-    }
-    $varName = $line.Substring(0, $eqIdx)
+    if ($eqIdx -lt 0) { $tplLines += $line; continue }
+
+    $varName  = $line.Substring(0, $eqIdx)
     $varValue = $line.Substring($eqIdx + 1)
 
     if ($varName -match $SECRET_PATTERNS) {
-        $tField = Get-FieldName $varName
+        $tField    = Get-FieldName $varName
         $tplLines += "$varName=op://$REPO_NAME/$varName/$tField"
-    }
-    else {
-        # Strip inline comments so they don't become part of the variable value
-        $cleanValue = ($varValue -split '\s+#')[0]
-        $tplLines += "$varName=$cleanValue"
+    } else {
+        $tplLines += $line
     }
 }
-$utf8NoBom = New-Object System.Text.UTF8Encoding $false
-[System.IO.File]::WriteAllLines((Join-Path (Get-Location).Path '.env.tpl'), $tplLines, $utf8NoBom)
+$tplLines | Set-Content -Path .env.tpl -Encoding UTF8
 
 # Aggiunge .env al .gitignore
 if (Test-Path .gitignore) {
     $gi = Get-Content .gitignore
-    if ($gi -notcontains ".env") {
-        Add-Content .gitignore ".env"
-    }
-}
-else {
+    if ($gi -notcontains ".env") { Add-Content .gitignore ".env" }
+} else {
     ".env" | Set-Content .gitignore -Encoding UTF8
 }
 
 Write-Host ""
 Write-Host "Done! $SECRETS_COUNT segreti salvati in 1Password, .env.tpl generato." -ForegroundColor Green
-
-# --- Offri creazione Service Account ---
-$SA_NAME = "Futura-Dev"
-
-# Controlla se il SA esiste già: la variabile User-level persiste anche se
-# nella sessione corrente è stata azzerata con $env:OP_SERVICE_ACCOUNT_TOKEN = $null
-$existingSA = [bool][Environment]::GetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', 'User')
-
-if ($existingSA) {
-    Write-Host ""
-    Write-Host "Service Account '$SA_NAME' trovato." -ForegroundColor Cyan
-    Write-Host "Aggiungi il vault '$REPO_NAME' dal portale 1Password:" -ForegroundColor Yellow
-    Write-Host "  1password.com -> Service Accounts -> $SA_NAME -> Vaults -> Add vault -> $REPO_NAME" -ForegroundColor DarkGray
-    Write-Host ""
-    Write-Host "Per resettare il token:" -ForegroundColor DarkGray
-    Write-Host "  [Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', `$null, 'User')" -ForegroundColor DarkGray
-}
-else {
-
 Write-Host ""
-$createSA = Read-Host "Vuoi creare il Service Account '$SA_NAME' per evitare op signin in futuro? (y/N)"
-
-if ($createSA -match '^[Yy]$') {
-    Write-Host "Creazione Service Account '$SA_NAME'..." -ForegroundColor Cyan
-    $saVaultArg = $VAULT_ID + ":read_items"
-    $saOutput = op service-account create $SA_NAME --vault $saVaultArg 2>&1
-    $saExitCode = $LASTEXITCODE
-    $saString = $saOutput | Out-String
-
-    if ($saExitCode -eq 0) {
-        Write-Host ""
-        Write-Host "Service Account creato!" -ForegroundColor Green
-        Write-Host ""
-        Write-Host "SALVA QUESTO TOKEN ORA - non sara' piu' visibile." -ForegroundColor Yellow
-
-        if ($saString -match '(ops_[A-Za-z0-9._\-]+|sa_[A-Za-z0-9._\-]+)') {
-            $SA_TOKEN = $Matches[1]
-
-            try {
-                [Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', $SA_TOKEN, 'User')
-                Write-Host "OP_SERVICE_ACCOUNT_TOKEN impostata a livello User (Windows). Apri una nuova shell." -ForegroundColor Green
-            }
-            catch {
-                Write-Host "Impossibile impostare la variabile utente." -ForegroundColor Yellow
-            }
-
-            Write-Host ""
-            Write-Host "Token: $SA_TOKEN"
-        }
-        else {
-            Write-Host "Non sono riuscito ad estrarre il token. Output completo:" -ForegroundColor Yellow
-            Write-Host ""
-            Write-Host $saString
-            Write-Host ""
-            Write-Host "Copia il token e impostalo manualmente:"
-            Write-Host "[Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN','PASTE_TOKEN','User')"
-        }
-    }
-    else {
-        Write-Host "Errore nella creazione del Service Account:" -ForegroundColor Red
-        Write-Host $saString
-    }
-}
-} # end: SA non esistente
-
-Write-Host ""
-Write-Host 'Per avviare l''app:'
+Write-Host "Per avviare l'app:"
 Write-Host "  op run --env-file=.env.tpl -- uv run uvicorn app.main:app --port 8000 --reload"

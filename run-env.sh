@@ -1,15 +1,18 @@
 #!/bin/bash
 
 # =============================================================================
-# run-env.sh — Setup segreti in 1Password + genera .env.tpl
+# run-env-v2.sh — Setup segreti in 1Password + genera .env.tpl
 #
-# Questo script RICHIEDE login interattivo (op signin) perche' deve SCRIVERE
-# nel vault. Il Service Account (read-only) serve solo per l'uso quotidiano
-# con "op run".
+# Modalità SA          : export OP_SERVICE_ACCOUNT_TOKEN='ops_...' prima di eseguire
+# Modalità interattiva : op signin, poi bash run-env-v2.sh
+#
+# Il vault non viene ricreato se esiste già (riesecuzione sicura).
 # =============================================================================
 
-# Pattern per riconoscere i segreti (case-insensitive match sul nome variabile)
 SECRET_PATTERNS="KEY|PASSWORD|SECRET|TOKEN|CREDENTIAL|USER"
+
+SA_NAME="Futura-Dev"
+ADMIN_EMAIL="administration@futuraaigroup.com"
 
 # Determina il nome del campo 1Password in base al tipo di segreto
 field_name_for() {
@@ -26,30 +29,52 @@ field_name_for() {
 }
 
 # --- Prerequisiti ---
-if ! git rev-parse --is-inside-work-tree &> /dev/null; then
+if ! git rev-parse --is-inside-work-tree &>/dev/null; then
   echo "Non sei dentro una repo git."
   exit 1
 fi
 
-if ! command -v op &> /dev/null; then
+if ! command -v op &>/dev/null; then
   echo "1Password CLI non installato. Installalo da https://developer.1password.com/docs/cli"
   exit 1
 fi
 
-if [ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
-  echo "Questo script richiede login interattivo (non Service Account)."
-  echo "Rimuovi il token e usa op signin:"
-  echo "  unset OP_SERVICE_ACCOUNT_TOKEN"
-  echo "  op signin"
-  echo "  bash run-env.sh"
-  exit 1
-fi
+# --- Rilevamento modalità: SA o interattiva ---
+# BOOTSTRAPPED_TOKEN=true significa: token letto dal vault con sessione interattiva ancora attiva.
+# In quel caso il token NON viene esportato subito, così possiamo usare la sessione
+# interattiva per condividere il vault con l'account del dev prima di passare a SA mode.
+BOOTSTRAPPED_TOKEN=false
+DEV_EMAIL="dev.futuraai@gmail.com"
+SA_TOKEN_FROM_VAULT=""
 
-if ! op account list &> /dev/null; then
-  echo "Non sei autenticato a 1Password. Esegui: op signin"
-  exit 1
+if [ -n "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
+  MODE="sa"
+  echo "Modalità: Service Account"
+else
+  # Token non impostato: tenta di recuperarlo dal vault FuturaDev tramite login interattivo
+  if ! op account list &>/dev/null; then
+    echo "OP_SERVICE_ACCOUNT_TOKEN non impostato e nessun login attivo."
+    echo "Esegui: op signin"
+    exit 1
+  fi
+
+  echo "OP_SERVICE_ACCOUNT_TOKEN non impostato. Recupero dal vault FuturaDev..."
+  SA_TOKEN_FROM_VAULT=$(op read "op://FuturaDev/OP-SA-Token/credential" 2>/dev/null)
+
+  if [ -n "$SA_TOKEN_FROM_VAULT" ]; then
+    MODE="sa"
+    BOOTSTRAPPED_TOKEN=true
+
+    echo "Token SA recuperato. Modalità: Service Account (account: $DEV_EMAIL)"
+    echo ""
+    echo "Per non ripetere op signin in futuro, aggiungi al tuo profilo:"
+    echo "  export OP_SERVICE_ACCOUNT_TOKEN=\$(op read \"op://FuturaDev/OP-SA-Token/credential\")"
+    # Il token NON viene esportato ancora: serve la sessione interattiva per la condivisione vault
+  else
+    MODE="interactive"
+    echo "Modalità: account interattivo (token SA non trovato nel vault FuturaDev)"
+  fi
 fi
-echo "Autenticato con sessione interattiva"
 
 REPO_URL=$(git remote get-url origin)
 REPO_NAME=$(basename "$REPO_URL" .git)
@@ -60,25 +85,124 @@ if [ ! -f .env ]; then
 fi
 
 # --- Crea o trova il vault ---
-VAULT_ID=$(op vault get "$REPO_NAME" --format=json 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+# In bootstrap: usa il token SA inline (non esportato) così il SA risulta proprietario del vault.
+if [ "$BOOTSTRAPPED_TOKEN" = true ]; then
+  VAULT_JSON_GET=$(OP_SERVICE_ACCOUNT_TOKEN="$SA_TOKEN_FROM_VAULT" op vault get "$REPO_NAME" --format=json 2>/dev/null)
+else
+  VAULT_JSON_GET=$(op vault get "$REPO_NAME" --format=json 2>/dev/null)
+fi
+
+VAULT_ID=""
+if [ -n "$VAULT_JSON_GET" ]; then
+  if command -v jq &>/dev/null; then
+    VAULT_ID=$(echo "$VAULT_JSON_GET" | jq -r '.id' 2>/dev/null)
+  elif command -v python3 &>/dev/null; then
+    VAULT_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin)['id'])" 2>/dev/null <<< "$VAULT_JSON_GET")
+  else
+    VAULT_ID=$(echo "$VAULT_JSON_GET" | tr -d '\n' | grep -oE '"id": *"[^"]*"' | head -1 | sed 's/.*"id": *"//;s/"//')
+  fi
+fi
 
 if [ -z "$VAULT_ID" ]; then
   echo "Creazione vault '$REPO_NAME'..."
-  VAULT_JSON=$(op vault create "$REPO_NAME" --format=json 2>&1)
+
+  if [ "$BOOTSTRAPPED_TOKEN" = true ]; then
+    VAULT_JSON=$(OP_SERVICE_ACCOUNT_TOKEN="$SA_TOKEN_FROM_VAULT" op vault create "$REPO_NAME" --format=json 2>&1)
+  else
+    VAULT_JSON=$(op vault create "$REPO_NAME" --format=json 2>&1)
+  fi
+
   if [ $? -ne 0 ]; then
     echo "Impossibile creare il vault:"
     echo "  $VAULT_JSON"
     exit 1
   fi
-  VAULT_ID=$(echo "$VAULT_JSON" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+  if command -v jq &>/dev/null; then
+    VAULT_ID=$(echo "$VAULT_JSON" | jq -r '.id' 2>/dev/null)
+  elif command -v python3 &>/dev/null; then
+    VAULT_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin)['id'])" 2>/dev/null <<< "$VAULT_JSON")
+  else
+    VAULT_ID=$(echo "$VAULT_JSON" | tr -d '\n' | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+  fi
 
   if [ -z "$VAULT_ID" ]; then
     echo "Impossibile estrarre ID del vault:"
     echo "  $VAULT_JSON"
     exit 1
   fi
+  VAULT_JUST_CREATED=true
+  echo "Vault '$REPO_NAME' creato ($VAULT_ID)"
+
+  # In bootstrap: condividi con il dev e l'admin usando la sessione interattiva ancora attiva
+  # (PRIMA di esportare il token SA, che sovrascrive la sessione interattiva)
+  if [ "$BOOTSTRAPPED_TOKEN" = true ]; then
+    if [ -n "$DEV_EMAIL" ]; then
+      SHARE_DEV=$(OP_SERVICE_ACCOUNT_TOKEN="$SA_TOKEN_FROM_VAULT" op vault user grant --vault "$VAULT_ID" --user "$DEV_EMAIL" --permissions="allow_viewing,allow_editing,allow_managing" 2>&1)
+      if [ $? -eq 0 ]; then
+        echo "Vault condiviso con il tuo account ($DEV_EMAIL)."
+      else
+        echo "ATTENZIONE: impossibile condividere con $DEV_EMAIL: $SHARE_DEV"
+        echo "  Chiedi all'admin di eseguire:"
+        echo "  op vault user grant --vault $VAULT_ID --user $DEV_EMAIL --permissions allow_viewing,allow_editing,allow_managing"
+      fi
+    fi
+    SHARE_ADMIN=$(OP_SERVICE_ACCOUNT_TOKEN="$SA_TOKEN_FROM_VAULT" op vault user grant --vault "$VAULT_ID" --user "$ADMIN_EMAIL" --permissions="allow_viewing,allow_editing,allow_managing" 2>&1)
+    if [ $? -eq 0 ]; then
+      echo "Vault condiviso con l'admin ($ADMIN_EMAIL)."
+    else
+      echo "ATTENZIONE: impossibile condividere con $ADMIN_EMAIL: $SHARE_ADMIN"
+      echo "  Chiedi all'admin di eseguire:"
+      echo "  op vault user grant --vault $VAULT_ID --user $ADMIN_EMAIL --permissions allow_viewing,allow_editing,allow_managing"
+    fi
+
+    # Ora il token SA può essere esportato per le operazioni sugli items
+    export OP_SERVICE_ACCOUNT_TOKEN="$SA_TOKEN_FROM_VAULT"
+  fi
+else
+  VAULT_JUST_CREATED=false
+  echo "Vault '$REPO_NAME' già esistente ($VAULT_ID) — skip creazione"
+
+  # Vault esistente: esporta il token SA (sessione interattiva non più necessaria)
+  if [ "$BOOTSTRAPPED_TOKEN" = true ]; then
+    export OP_SERVICE_ACCOUNT_TOKEN="$SA_TOKEN_FROM_VAULT"
+  fi
 fi
-echo "Vault: $REPO_NAME ($VAULT_ID)"
+
+# --- Condivisione vault con admin (solo in modalità interattiva pura) ---
+if [ "$MODE" = "interactive" ]; then
+  if op vault user list "$VAULT_ID" --format=json 2>/dev/null | grep -q "$ADMIN_EMAIL"; then
+    echo "Admin ($ADMIN_EMAIL) ha già accesso al vault."
+  else
+    echo ""
+    echo "Vuoi condividere il vault '$REPO_NAME' con l'admin ($ADMIN_EMAIL)? (y/N)"
+    read -r SHARE_CHOICE
+    if [[ "$SHARE_CHOICE" =~ ^[Yy]$ ]]; then
+      SHARE_OUTPUT=$(op vault user grant --vault "$VAULT_ID" --user "$ADMIN_EMAIL" --permissions="allow_viewing,allow_editing,allow_managing" 2>&1)
+      if [ $? -eq 0 ]; then
+        echo "Vault condiviso con l'admin."
+      else
+        echo "ATTENZIONE: Impossibile condividere il vault:"
+        echo "  $SHARE_OUTPUT"
+        echo "Condividilo manualmente:"
+        echo "  op vault user grant --vault $VAULT_ID --user $ADMIN_EMAIL --permissions allow_viewing,allow_editing,allow_managing"
+      fi
+    fi
+  fi
+fi
+
+# --- Avviso SA (solo in modalità interattiva, solo se vault appena creato) ---
+# La CLI 1Password non supporta l'assegnazione di un SA a un vault esistente.
+# L'unico modo automatico è che il SA crei il vault lui stesso (--can-create-vaults).
+if [ "$MODE" = "interactive" ] && [ "$VAULT_JUST_CREATED" = "true" ]; then
+  echo ""
+  echo "ATTENZIONE: assegna manualmente il vault al Service Account '$SA_NAME':"
+  echo "  1password.com -> Service Accounts -> $SA_NAME -> Vaults -> Add vault -> $REPO_NAME"
+  echo ""
+  echo "Oppure riesegui con il token SA (il vault non verrà ricreato):"
+  echo "  export OP_SERVICE_ACCOUNT_TOKEN=\$(op read \"op://FuturaDev/OP-SA-Token/credential\")"
+  echo "  bash $(basename "$0")"
+fi
 
 # --- Salva segreti nel vault ---
 SECRET_NAMES=()
@@ -98,9 +222,11 @@ while IFS= read -r line; do
 done < .env
 
 if [ "$SECRETS_COUNT" -eq 0 ]; then
+  echo ""
   echo "Nessun segreto trovato nel .env (pattern: $SECRET_PATTERNS)"
   echo "Il .env.tpl conterra' solo valori in chiaro."
 else
+  echo ""
   for i in "${!SECRET_NAMES[@]}"; do
     NAME="${SECRET_NAMES[$i]}"
     VALUE="${SECRET_VALUES[$i]}"
@@ -136,9 +262,7 @@ while IFS= read -r line; do
     FIELD=$(field_name_for "$VAR_NAME")
     echo "$VAR_NAME=op://$REPO_NAME/$VAR_NAME/$FIELD" >> .env.tpl
   else
-    # Strip inline comments so they don't become part of the variable value
-    CLEAN_VALUE=$(echo "$VAR_VALUE" | sed 's/[[:space:]]*#.*$//')
-    echo "$VAR_NAME=$CLEAN_VALUE" >> .env.tpl
+    echo "$VAR_NAME=$VAR_VALUE" >> .env.tpl
   fi
 done < .env
 
@@ -149,88 +273,6 @@ fi
 
 echo ""
 echo "Done! $SECRETS_COUNT segreti salvati in 1Password, .env.tpl generato."
-
-# --- Offri creazione Service Account ---
-SA_NAME="Futura-Dev"
-
-# Controlla se il SA esiste già:
-# - Windows: legge OP_SERVICE_ACCOUNT_TOKEN a livello User dal registro
-# - Linux/macOS: cerca la riga in ~/.profile
-EXISTING_TOKEN=""
-if command -v powershell.exe >/dev/null 2>&1; then
-  EXISTING_TOKEN=$(powershell.exe -NoProfile -Command \
-    "[Environment]::GetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', 'User')" 2>/dev/null | tr -d '\r')
-else
-  grep -q "OP_SERVICE_ACCOUNT_TOKEN" "$HOME/.profile" 2>/dev/null && EXISTING_TOKEN="found"
-fi
-
-if [ -n "$EXISTING_TOKEN" ]; then
-  echo ""
-  echo "Service Account '$SA_NAME' trovato."
-  echo "Aggiungi il vault '$REPO_NAME' dal portale 1Password:"
-  echo "  1password.com -> Service Accounts -> $SA_NAME -> Vaults -> Add vault -> $REPO_NAME"
-  echo ""
-  if command -v powershell.exe >/dev/null 2>&1; then
-    echo "Per resettare il token:"
-    echo "  [Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', \$null, 'User')"
-  else
-    echo "Per resettare il token: rimuovi la riga OP_SERVICE_ACCOUNT_TOKEN da ~/.profile."
-  fi
-else
-echo ""
-echo "Vuoi creare il Service Account '$SA_NAME' per evitare op signin in futuro? (y/N)"
-read -r CREATE_SA
-
-if [[ "$CREATE_SA" =~ ^[Yy]$ ]]; then
-  echo "Creazione Service Account '$SA_NAME'..."
-  SA_TOKEN_RAW=$(op service-account create "$SA_NAME" \
-    --vault "${VAULT_ID}:read_items" \
-    2>&1)
-  SA_EXIT=$?
-
-  if [ $SA_EXIT -eq 0 ]; then
-    echo ""
-    echo "Service Account creato!"
-    echo ""
-    echo "SALVA QUESTO TOKEN ORA - non sara' piu' visibile."
-
-    # Extract token string
-    SA_TOKEN=$(printf "%s" "$SA_TOKEN_RAW" | grep -oE '(ops_|sa_)[A-Za-z0-9._-]+' | head -1)
-
-    if [ -n "$SA_TOKEN" ]; then
-      # Persist token for Windows (PowerShell) if available
-      if command -v powershell.exe >/dev/null 2>&1; then
-        powershell.exe -NoProfile -Command "[Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', '$SA_TOKEN', 'User')" >/dev/null 2>&1 \
-          && echo "OP_SERVICE_ACCOUNT_TOKEN impostata a livello User (Windows). Apri una nuova shell." \
-          || echo "Impossibile impostare la variabile utente su Windows via PowerShell."
-      else
-        # Persist for POSIX shells
-        PROFILE_FILE="$HOME/.profile"
-        if [ -w "$PROFILE_FILE" ] || [ ! -e "$PROFILE_FILE" ]; then
-          printf "\n# 1Password Service Account token\nexport OP_SERVICE_ACCOUNT_TOKEN='%s'\n" "$SA_TOKEN" >> "$PROFILE_FILE"
-          echo "OP_SERVICE_ACCOUNT_TOKEN aggiunta a $PROFILE_FILE. Apri una nuova shell."
-        else
-          echo "Non ho i permessi per scrivere $PROFILE_FILE."
-        fi
-      fi
-
-      echo ""
-      echo "Token: $SA_TOKEN"
-    else
-      echo "Non sono riuscito ad estrarre il token. Output completo:"
-      echo ""
-      echo "$SA_TOKEN_RAW"
-      echo ""
-      echo "Copia il token e impostalo manualmente:"
-      echo "  PowerShell: [Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN','PASTE_TOKEN','User')"
-    fi
-  else
-    echo "Errore nella creazione del Service Account:"
-    echo "  $SA_TOKEN_RAW"
-  fi
-fi
-fi  # end: SA non esistente
-
 echo ""
 echo "Per avviare l'app:"
 echo "  op run --env-file=.env.tpl -- uv run uvicorn app.main:app --port 8000 --reload"
